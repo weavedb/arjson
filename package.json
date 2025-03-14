@@ -1,0 +1,11 @@
+{
+  "name": "arjson",
+  "version": "0.0.1",
+  "license": "MIT",
+  "dependencies": {
+    "ramda": "^0.29.1"
+  },
+  "devDependencies": {
+    "@msgpack/msgpack": "^3.0.1"
+  }
+}
