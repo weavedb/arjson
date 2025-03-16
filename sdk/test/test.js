@@ -3,7 +3,7 @@ import assert from "assert"
 import { createJSON } from "./utils.js"
 import { encode as enc, decode as dec } from "@msgpack/msgpack"
 import { encode, Encoder, decode, Decoder, Parser } from "../src/index.js"
-import { calcDiff } from "../src/parser.js"
+import { Bundle, delta } from "../src/parser.js"
 import { range } from "ramda"
 
 let data = {
@@ -42,22 +42,19 @@ let data_x = { a: 3, e: { u: 9, f: 6, a: 7, b: 4 }, g: [1] }
 const path_x = "g"
 const val_x = undefined
 
-describe("zkJSON v2", function () {
-  it.only("should calculate delta of 2 objects", () => {
+describe("ARJSON", function () {
+  it("should calculate delta of 2 objects", () => {
     let d = new Decoder()
     const a = { a: 3, e: { f: 5, t: 7 }, g: [1, 3], dc: false }
-    const q = calcDiff(a, {
-      e: { f: 6, a: 7 },
-      g: [1, 2, { y: 3 }],
-      abc: true,
-      dc: null,
-    })
+    const b = { e: { f: 6, a: 7 }, g: [1, 2, { y: 3 }], abc: true, dc: null }
+    const { len, q } = delta(a, b)
     let u = new Encoder()
     const e = encode(a, u)
     const decoded = decode(e, d)
     let p = new Parser(d.cols())
-    const res = p.update(e, q)
-    console.log(res)
+    const q2 = u._dump(q)
+    const res = p.update(e, q2, len)
+    assert.deepEqual(res.json, b)
   })
 
   it("should delta upgrade JSON", () => {
@@ -72,117 +69,6 @@ describe("zkJSON v2", function () {
     let { query: q } = p.query(path_x, val_x)
     console.log(q)
     console.log(p.update(_e, q))
-    return
-  })
-
-  it("should delta upgrade JSON", () => {
-    data = { c: 1 }
-    let d = new Decoder()
-    let u = new Encoder()
-    const _e = encode(data, u)
-    const decoded = decode(_e, d)
-
-    console.log("decoded:", decoded)
-    console.log(data)
-    d.show()
-
-    assert.deepEqual(data, decoded)
-    let meta = d.show()
-    console.log(meta)
-    let p = new Parser(meta)
-    /*
-    let q = p.query("abc", 1)
-    console.log(p.update(q))
-    */
-    //let q = p.query("b[1]", 10)
-
-    let { query: q } = p.query("c", [1, 2])
-    console.log("query", q)
-    const res = p.update(q)
-    const data2 = res.json
-    console.log(data2)
-    let d2 = new Decoder()
-    let u2 = new Encoder()
-    const _e2 = encode(data2, u2)
-    const decoded2 = decode(_e2, d2)
-    console.log("decoded:", decoded2)
-    let meta2 = d.show()
-    console.log(meta2)
-    let p2 = new Parser(meta2)
-    let { query: q2 } = p2.query("c[0]", 100)
-    console.log(p2.update(q2))
-    return
-    ;({ query: q } = p.query("c[0]", 100))
-    console.log(q)
-    console.log("query", q)
-    //console.log(p.update(q))
-    return
-    ;({ query: q } = p.query("b[0]", "create", 20))
-    console.log(p.update(q))
-    ;({ query: q } = p.query("b[2]", "create", 5))
-    console.log(p.update(q))
-    ;({ query: q } = p.query("c", "create", 8))
-    console.log(q)
-    return
-
-    // update
-    meta.vrefs.push(2)
-    meta.types.push(4)
-    meta.nums.push(5)
-    console.log(p.build())
-
-    // add field
-    meta.krefs.push(1)
-    meta.ktypes.push([2, 2])
-    meta.keys.push("b")
-    meta.vrefs.push(3)
-    meta.types.push(4)
-    meta.nums.push(6)
-
-    // delete field
-    meta.vrefs.push(2)
-    meta.types.push(null)
-    console.log(p.build())
-
-    console.log(meta)
-
-    // update object
-    meta.krefs.push(1)
-    meta.ktypes.push([2, 2])
-    meta.keys.push("c")
-
-    meta.vrefs.push(4)
-    meta.types.push(6)
-    meta.nums.push({})
-
-    // update object 2
-    meta.krefs.push(1)
-    meta.ktypes.push([2, 2])
-    meta.keys.push("e")
-
-    meta.krefs.push(5)
-    meta.ktypes.push([1])
-    meta.keys.push(1)
-    console.log(meta)
-
-    meta.krefs.push(6)
-    meta.ktypes.push([2, 2])
-    meta.keys.push("f")
-
-    meta.vrefs.push(7)
-    meta.types.push(6)
-    meta.nums.push(4)
-
-    console.log(meta)
-
-    console.log(p.build())
-
-    // delete object
-    meta.vrefs.push(5)
-    meta.types.push(null)
-    console.log(p.build())
-
-    process.exit()
   })
 
   it("should compare sizes", () => {
@@ -218,7 +104,7 @@ describe("zkJSON v2", function () {
     console.log()
   })
 
-  it("should encode with v2", () => {
+  it("should encode with arjson", () => {
     console.log()
     data = createJSON()
 
@@ -238,7 +124,7 @@ describe("zkJSON v2", function () {
     console.log("msg", msg)
     console.log()
     console.log("[json size]", Buffer.from(JSON.stringify(data), "utf8").length)
-    console.log("[zkjson v2 size]", Buffer.from(_e).length)
+    console.log("[arjson size]", Buffer.from(_e).length)
     console.log("[msgpack size]", Buffer.from(msg).length)
   })
 
@@ -272,7 +158,7 @@ describe("zkJSON v2", function () {
     const msg = enc(data)
     console.log("[msgpack size]", Buffer.from(msg).length)
     const _e = encode(data, u)
-    console.log("[zkjson v2 size]", Buffer.from(_e).length)
+    console.log("[arjson size]", Buffer.from(_e).length)
 
     console.log()
     const start0 = Date.now()
@@ -281,7 +167,7 @@ describe("zkJSON v2", function () {
 
     const start1 = Date.now()
     for (let i = 0; i < count; i++) encode(data, u)
-    console.log("[zkjson v2 encode]", Date.now() - start1)
+    console.log("[arjson encode]", Date.now() - start1)
 
     const start5 = Date.now()
     for (let i = 0; i < count; i++) JSON.stringify(data)
@@ -294,7 +180,7 @@ describe("zkJSON v2", function () {
 
     const start3 = Date.now()
     for (let i = 0; i < count; i++) decode(_e, d)
-    console.log("[zkjson decode]", Date.now() - start3)
+    console.log("[arjson decode]", Date.now() - start3)
 
     const str = JSON.stringify(data)
     const start4 = Date.now()
@@ -332,7 +218,7 @@ describe("zkJSON v2", function () {
     console.log("decoded", JSON.stringify(decoded))
     console.log()
     assert.deepEqual(decoded, data0)
-    return
+
     const msg = enc(data0)
     console.log()
     console.log(
@@ -340,11 +226,10 @@ describe("zkJSON v2", function () {
       Buffer.from(JSON.stringify(data0), "utf8").length,
       "[msg]",
       Buffer.from(msg).length,
-      "[zkj]",
+      "[arj]",
       Buffer.from(res0).length,
     )
     console.log()
-    return
 
     const num = 100000
     const start = Date.now()
@@ -353,55 +238,9 @@ describe("zkJSON v2", function () {
     const start0 = Date.now()
     for (let i = 0; i < num; i++) enc(data0)
     const dur0 = Date.now() - start0
-    console.log("speed: [msg]", dur0, "[zkj]", dur)
+    console.log("speed: [msg]", dur0, "[arj]", dur)
     console.log()
     console.log("[msg]", msg)
-    console.log("[zkj]", res0)
-    console.log()
-    return
-    console.log(decode(res0))
-    console.log(encode(data0, { offset: false, sort: false, dict: false }))
-  })
-
-  it("should encode and decode", () => {
-    console.log("size comparison..............................................")
-    console.log("[json size]", Buffer.from(JSON.stringify(data), "utf8").length)
-    const msg = enc(data)
-    console.log("[msgpack size]", Buffer.from(msg).length)
-    const _e0 = encode1(data)
-    console.log("zkjson v1 size", Buffer.from(_e0).length)
-
-    const _e = encode(data, { offset: false, sort: false })
-    console.log("zkjson(dic) size", Buffer.from(_e).length)
-    const _e2 = encode(data, { dict: false, sort: false })
-    console.log("zkjson(offset) size", Buffer.from(_e2).length)
-    assert.deepEqual(decode(_e2), data)
-    const _e3 = encode(data)
-    console.log("zkjson(dic + offset) size", Buffer.from(_e3).length)
-    console.log()
-    console.log(
-      "encode comparison..............................................",
-    )
-    const start0 = Date.now()
-    for (let i = 0; i < 1000; i++) enc(data)
-    console.log("[msgpack encode]", Date.now() - start0)
-
-    const start91 = Date.now()
-    for (let i = 0; i < 1000; i++)
-      encode(data, { dict: false, offset: false, sort: false })
-    console.log("[zkjson encode no dict]", Date.now() - start91)
-
-    const start9 = Date.now()
-    for (let i = 0; i < 1000; i++) encode(data)
-    console.log("[zkjson encode]", Date.now() - start9)
-
-    console.log()
-    console.log("get comparison..............................................")
-    let a = null
-    const start0_2 = Date.now()
-    for (let i = 0; i < 1000; i++) a = dec(msg).user.name
-    console.log("[msgpack get]", Date.now() - start0_2, a)
-
-    return
+    console.log("[arj]", res0)
   })
 })
