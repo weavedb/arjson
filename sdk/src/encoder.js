@@ -623,10 +623,22 @@ class Encoder {
     }
     return dumps
   }
-  _dump(bits) {
-    let totalBits = 0
+  _query(query) {
+    this.dc_len = 0
+    if (query) {
+      this.add_dc(query.op, 2)
+      this.short_dc(query.col)
+      this.leb128_2_dc(query.doc)
+      if (query.op === 2 && typeof query.len === "number") {
+        this.short_dc(query.len)
+      }
+    }
+    return { len: this.dc_len, bits: this.dc }
+  }
+  _dump(bits, query) {
+    this._query(query)
+    let totalBits = this.dc_len
     for (let v of bits) for (let v2 of v) totalBits += v2.len
-
     const padBits = (8 - (totalBits % 8)) % 8
     const finalBits = totalBits + padBits
     const outLength = finalBits / 8
@@ -668,11 +680,20 @@ class Encoder {
         i++
       }
     }
+    if (query) writeBuffer(this.dc, this.dc_len)
     for (let v of bits) for (let v2 of v) writeBuffer(v2.bits, v2.len)
     if (padBits > 0) writeBits(0, padBits)
     return out
   }
-  dump() {
+  dump(query) {
+    if (query) {
+      this.add_dc(query.op, 2)
+      this.short_dc(query.col)
+      this.leb128_2_dc(query.doc)
+      if (query.op === 2 && typeof query.len === "number") {
+        this.short_dc(query.len)
+      }
+    }
     if (!this.single) {
       this.flush_vlink()
       this.flush_klink()
@@ -789,7 +810,7 @@ function pushPathNum(u, prev = null, keylen, index = null) {
   u.dcount++
 }
 
-function encode(v, u) {
+function encode(v, u, query) {
   u.reset()
   if (typeof v === "undefined") {
     u.single = false
@@ -862,7 +883,7 @@ function encode(v, u) {
     u.single = false
     u.push_type(_encode(v, u))
   }
-  return u.dump()
+  return u.dump(query)
 }
 
 function _encode(

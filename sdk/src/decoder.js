@@ -31,7 +31,7 @@ class Decoder {
     return n
   }
 
-  decode(v, count = null, update = false) {
+  decode(v, count = null, update = false, query) {
     this.update = update
     if (count !== null) {
       this.nobuild = true
@@ -64,6 +64,13 @@ class Decoder {
     this.keys = []
     this.strs = []
     this.json = {}
+    if (query) {
+      this.op = this.n(2)
+      this.col = this.short()
+      this.doc = this.leb128()
+      if (this.op === 2) this.update_len = this.short()
+      if (this.op !== 1) return tobits(this.o, this.c)
+    }
     this.single = this.n(1) === 1
     if (this.single) this.getSingle()
     else {
@@ -700,9 +707,20 @@ class Decoder {
   }
 }
 
-function decode(v, d) {
-  d.decode(v)
-  return d.json
+function decode(v, d, query) {
+  const left = d.decode(v, undefined, undefined, query)
+  if (query) {
+    return {
+      op: d.op,
+      col: d.col,
+      doc: d.doc,
+      json: d.json,
+      left,
+      len: d.update_len,
+    }
+  } else {
+    return d.json
+  }
 }
 
 export { Decoder, decode }

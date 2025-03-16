@@ -271,19 +271,23 @@ class Parser {
     const _json = d4.build(json, typeof json === "undefined")
     return { left: frombits(left2), json: _json }
   }
-  update(obj, q) {
+  update(obj, q, len) {
     if (!q) return null
     const d = new Decoder()
     let res = null
     let _json = null
+    let i = 0
+    let left = null
     do {
       res = this._update(obj, q)
       _json = res.json
       q = res.left
+      left = res.left
       let u = new Encoder()
       obj = encode(res.json, u)
-    } while (q.length > 0)
-    return { json: _json }
+      i++
+    } while (q.length > 0 && typeof len === "number" && i < len)
+    return { json: _json, left }
   }
   getKey(i, keys) {
     const k = this.keys[i - 1]
@@ -614,7 +618,11 @@ const _calcDiff = (a, b, path = "", depth = 0) => {
   return q
 }
 
-const calcDiff = (a, b) => {
+const delta = (a, b, query) => {
+  if (query && query.op === 3) {
+    let u = new Encoder()
+    return [[u._query(query)]]
+  }
   let json = a
   const diffs = _calcDiff(a, b)
   let q = []
@@ -630,7 +638,56 @@ const calcDiff = (a, b) => {
     json = res.json
   }
   let u = new Encoder()
-  return u._dump(q)
+  if (query) {
+    query.len = diffs.length
+    let u2 = new Encoder()
+    let q2 = u2._query({
+      op: 2,
+      col: query.col,
+      doc: query.doc,
+      len: query.len,
+    })
+    q.unshift([q2])
+  }
+  return { len: diffs.length, q }
 }
 
-export { Parser, calcDiff }
+class Bundle {
+  constructor(data, db) {
+    this.q = []
+    this.data = data
+    this.db = db
+  }
+  async send() {
+    await this.db.query(this)
+  }
+  c(data, col, doc) {
+    this.data[col] ??= {}
+    let u2 = new Encoder()
+    let q = u2._query({ op: 1, col, doc })
+    this.q.push([q])
+    let u = new Encoder()
+    encode(data, u)
+    this.q.push(u.todump())
+    this.data[col][doc] = data
+    return this
+  }
+  u(b, col, doc) {
+    const a = this.data[col][doc]
+    const { len, q } = delta(a, b, { op: 2, col, doc })
+    this.q = concat(this.q, q)
+    this.data[col][doc] = b
+    return this
+  }
+  d(col, doc) {
+    const q = delta(null, null, { op: 3, col, doc })
+    this.q = concat(this.q, q)
+    delete this.data[col][doc]
+    return this
+  }
+  dump() {
+    let u = new Encoder()
+    return u._dump(this.q)
+  }
+}
+export { Parser, delta, Bundle }
