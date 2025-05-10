@@ -43,7 +43,16 @@ const path_x = "g"
 const val_x = undefined
 
 describe("ARJSON", function () {
-  it.only("should manage json updates", () => {
+  it("should encode and decode", () => {
+    let d = new Decoder()
+    let u = new Encoder()
+    const json = [["abc", 1]]
+    const e = encode(json, u)
+    const decoded = decode(e, d)
+    assert.deepEqual(decoded, json)
+  })
+
+  it("should manage json updates", () => {
     const aj = json(null, { val: 3 })
     aj.update({ val: 4 })
     aj.update({ val: 5, val2: 6 })
@@ -220,7 +229,7 @@ describe("ARJSON", function () {
   it("should encode and decode random json", () => {
     let d = new Decoder()
     let u = new Encoder()
-    for (let v of range(0, 1000)) {
+    for (let v of range(0, 10000)) {
       let data0 = createJSON()
       const res0 = encode(data0, u)
       const decoded = decode(res0, d)

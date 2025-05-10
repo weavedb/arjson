@@ -578,6 +578,7 @@ class Decoder {
             if (i2 === keys.length - 2) {
               const k2 = keys[i2 + 1]
               if (type(k2) === 0) {
+                set(k2)
                 json.push([])
                 json = json[json.length - 1]
                 this.arr_push(json, val)
