@@ -2,7 +2,7 @@ import { describe, it } from "node:test"
 import assert from "assert"
 import { createJSON } from "./utils.js"
 import { encode as enc, decode as dec } from "@msgpack/msgpack"
-import { encode, Encoder, decode, Decoder, Parser } from "../src/index.js"
+import { json, encode, Encoder, decode, Decoder, Parser } from "../src/index.js"
 import { Bundle, delta } from "../src/parser.js"
 import { range } from "ramda"
 
@@ -43,6 +43,14 @@ const path_x = "g"
 const val_x = undefined
 
 describe("ARJSON", function () {
+  it.only("should manage json updates", () => {
+    const aj = json(null, { val: 3 })
+    aj.update({ val: 4 })
+    aj.update({ val: 5, val2: 6 })
+    assert.deepEqual(aj.json(), { val: 5, val2: 6 })
+    const aj2 = json(aj.deltas())
+    assert.deepEqual(aj2.json(), { val: 5, val2: 6 })
+  })
   it("should calculate delta of 2 objects", () => {
     let d = new Decoder()
     const a = { a: 3, e: { f: 5, t: 7 }, g: [1, 3], dc: false }
@@ -55,6 +63,23 @@ describe("ARJSON", function () {
     const q2 = u._dump(q)
     const res = p.update(e, q2, len)
     assert.deepEqual(res.json, b)
+    console.log("from", a)
+    console.log("to", b)
+    console.log(
+      e.length,
+      "+",
+      q2.length,
+      "=",
+      JSON.stringify(a).length,
+      "+",
+      JSON.stringify(b).length,
+      "saving",
+      JSON.stringify(a).length +
+        JSON.stringify(b).length -
+        e.length -
+        q2.length,
+      "bytes",
+    )
   })
 
   it("should delta upgrade JSON", () => {
