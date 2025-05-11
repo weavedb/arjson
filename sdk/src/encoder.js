@@ -1,22 +1,22 @@
 import { getPrecision, bits, tobits, strmap, base64 } from "./utils.js"
 
 class Encoder {
-  constructor() {
-    this.kc_counts = new Uint32Array(32)
-    this.vc_counts = new Uint32Array(32)
-    this.kc_diffs = new Uint32Array(4)
-    this.vc_diffs = new Uint32Array(4)
-    this.vlinks = new Uint32Array(32)
-    this.klinks = new Uint32Array(32)
-    this.vflags = new Uint32Array(16)
-    this.kflags = new Uint32Array(16)
-    this.bools = new Uint32Array(16)
-    this.keys = new Uint32Array(32)
-    this.types = new Uint32Array(32)
-    this.nums = new Uint32Array(32)
-    this.dc = new Uint32Array(32)
-    this.kvals = new Uint32Array(64)
-    this.vals = new Uint32Array(64)
+  constructor(n = 1) {
+    this.kc_counts = new Uint32Array(32 * n)
+    this.vc_counts = new Uint32Array(32 * n)
+    this.kc_diffs = new Uint32Array(4 * n)
+    this.vc_diffs = new Uint32Array(4 * n)
+    this.vlinks = new Uint32Array(32 * n)
+    this.klinks = new Uint32Array(32 * n)
+    this.vflags = new Uint32Array(16 * n)
+    this.kflags = new Uint32Array(16 * n)
+    this.bools = new Uint32Array(16 * n)
+    this.keys = new Uint32Array(32 * n)
+    this.types = new Uint32Array(32 * n)
+    this.nums = new Uint32Array(32 * n)
+    this.dc = new Uint32Array(32 * n)
+    this.kvals = new Uint32Array(64 * n)
+    this.vals = new Uint32Array(64 * n)
 
     this.strMap = new Map()
 
@@ -713,7 +713,6 @@ class Encoder {
       this.bools_len +
       this.kvals_len +
       this.vals_len
-
     const padBits = (8 - (totalBits % 8)) % 8
     const finalBits = totalBits + padBits
     const outLength = finalBits / 8
@@ -965,12 +964,6 @@ function _encode(
   } else if (typeof v === "string") {
     let ktype = 7
     if (prev !== null) u.push_vlink(prev + 1)
-    if (
-      prev_type !== null &&
-      (prev_type[1] !== null || prev_type[2] !== null || prev_type[0] !== ktype)
-    )
-      u.push_type(prev_type)
-    else u.tcount++
     if (u.strMap.has(v)) {
       ktype = 2
       u.short_vals(0)
@@ -992,10 +985,16 @@ function _encode(
         }
         if (is64) ktype = 2
       }
-
       if (is64) for (let v of codes) u.add_vals(v, 6)
       else for (let v of codes2) u.leb128_2_vals(v)
     }
+    if (
+      prev_type !== null &&
+      (prev_type[1] !== null || prev_type[2] !== null || prev_type[0] !== ktype)
+    ) {
+      u.push_type(prev_type)
+    } else u.tcount++
+
     return [ktype, index, push]
   } else if (Array.isArray(v)) {
     // if index... put empty [], then link to it

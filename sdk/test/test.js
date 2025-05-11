@@ -41,14 +41,157 @@ let data_x = { a: 3, e: { u: 9, f: 6, a: 7, b: 4 }, g: [1] }
 
 const path_x = "g"
 const val_x = undefined
-
+const draft_07 = {
+  index: 0,
+  schema: {
+    type: "object",
+    required: ["index", "schema", "auth"],
+    additionalProperties: false,
+    properties: {
+      index: { type: "number" },
+      schema: { $ref: "http://json-schema.org/draft-07/schema#" },
+      docs: {
+        type: "object",
+        propertyNames: {
+          type: "string",
+          pattern: "^[A-Za-z0-9_-]+$",
+          maxLength: 42,
+        },
+        additionalProperties: {
+          type: "object",
+          required: ["schema"],
+          properties: {
+            schema: { $ref: "http://json-schema.org/draft-07/schema#" },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    definitions: {
+      draft_07: {
+        $schema: "http://json-schema.org/draft-07/schema#",
+        $id: "http://json-schema.org/draft-07/schema#",
+        title: "Core schema meta-schema",
+        definitions: {
+          schemaArray: { type: "array", minItems: 1, items: { $ref: "#" } },
+          nonNegativeInteger: { type: "integer", minimum: 0 },
+          nonNegativeIntegerDefault0: {
+            allOf: [
+              { $ref: "#/definitions/nonNegativeInteger" },
+              { default: 0 },
+            ],
+          },
+          simpleTypes: {
+            enum: [
+              "array",
+              "boolean",
+              "integer",
+              "null",
+              "number",
+              "object",
+              "string",
+            ],
+          },
+          stringArray: {
+            type: "array",
+            items: { type: "string" },
+            uniqueItems: true,
+            default: [],
+          },
+        },
+        type: ["object", "boolean"],
+        properties: {
+          $id: { type: "string", format: "uri-reference" },
+          $schema: { type: "string", format: "uri" },
+          $ref: { type: "string", format: "uri-reference" },
+          $comment: { type: "string" },
+          title: { type: "string" },
+          description: { type: "string" },
+          default: true,
+          readOnly: { type: "boolean", default: false },
+          writeOnly: { type: "boolean", default: false },
+          examples: { type: "array", items: true },
+          multipleOf: { type: "number", exclusiveMinimum: 0 },
+          maximum: { type: "number" },
+          exclusiveMaximum: { type: "number" },
+          minimum: { type: "number" },
+          exclusiveMinimum: { type: "number" },
+          maxLength: { $ref: "#/definitions/nonNegativeInteger" },
+          minLength: { $ref: "#/definitions/nonNegativeIntegerDefault0" },
+          pattern: { type: "string", format: "regex" },
+          additionalItems: { $ref: "#" },
+          items: {
+            anyOf: [{ $ref: "#" }, { $ref: "#/definitions/schemaArray" }],
+            default: true,
+          },
+          maxItems: { $ref: "#/definitions/nonNegativeInteger" },
+          minItems: { $ref: "#/definitions/nonNegativeIntegerDefault0" },
+          uniqueItems: { type: "boolean", default: false },
+          contains: { $ref: "#" },
+          maxProperties: { $ref: "#/definitions/nonNegativeInteger" },
+          minProperties: { $ref: "#/definitions/nonNegativeIntegerDefault0" },
+          required: { $ref: "#/definitions/stringArray" },
+          additionalProperties: { $ref: "#" },
+          definitions: {
+            type: "object",
+            additionalProperties: { $ref: "#" },
+            default: {},
+          },
+          properties: {
+            type: "object",
+            additionalProperties: { $ref: "#" },
+            default: {},
+          },
+          patternProperties: {
+            type: "object",
+            additionalProperties: { $ref: "#" },
+            propertyNames: { format: "regex" },
+            default: {},
+          },
+          dependencies: {
+            type: "object",
+            additionalProperties: {
+              anyOf: [{ $ref: "#" }, { $ref: "#/definitions/stringArray" }],
+            },
+          },
+          propertyNames: { $ref: "#" },
+          const: true,
+          enum: { type: "array", items: true, minItems: 1, uniqueItems: true },
+          type: {
+            anyOf: [
+              { $ref: "#/definitions/simpleTypes" },
+              {
+                type: "array",
+                items: { $ref: "#/definitions/simpleTypes" },
+                minItems: 1,
+                uniqueItems: true,
+              },
+            ],
+          },
+          format: { type: "string" },
+          contentMediaType: { type: "string" },
+          contentEncoding: { type: "string" },
+          if: { $ref: "#" },
+          then: { $ref: "#" },
+          else: { $ref: "#" },
+          allOf: { $ref: "#/definitions/schemaArray" },
+          anyOf: { $ref: "#/definitions/schemaArray" },
+          oneOf: { $ref: "#/definitions/schemaArray" },
+          not: { $ref: "#" },
+        },
+        default: true,
+      },
+    },
+  },
+}
 describe("ARJSON", function () {
-  it("should encode and decode", () => {
+  it.only("should encode and decode", () => {
     let d = new Decoder()
-    let u = new Encoder()
-    const json = [["abc", 1]]
+    let u = new Encoder(2)
+    let json = draft_07
     const e = encode(json, u)
     const decoded = decode(e, d)
+    console.log(decoded)
     assert.deepEqual(decoded, json)
   })
 
