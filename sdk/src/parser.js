@@ -189,8 +189,8 @@ class Parser {
     return _path
   }
 
-  query(path, v, op = null) {
-    const u = new Encoder()
+  query(path, v, op = null, n) {
+    const u = new Encoder(n)
     u.reset()
     u.single = false
     u.query = true
@@ -237,7 +237,7 @@ class Parser {
       }
     }
     if (q) {
-      const u2 = new Encoder()
+      const u2 = new Encoder(n)
       const q2 = encode(v, u2)
       const bits1 = u.todump()
       const bits2 = u2.todump()
@@ -271,7 +271,7 @@ class Parser {
     const _json = d4.build(json, typeof json === "undefined")
     return { left: frombits(left2), json: _json }
   }
-  update(obj, q, len) {
+  update(obj, q, len, n) {
     if (!q) return null
     const d = new Decoder()
     let res = null
@@ -283,7 +283,7 @@ class Parser {
       _json = res.json
       q = res.left
       left = res.left
-      let u = new Encoder()
+      let u = new Encoder(n)
       obj = encode(res.json, u)
       i++
     } while (q.length > 0 && typeof len === "number" && i < len)
@@ -618,16 +618,16 @@ const _calcDiff = (a, b, path = "", depth = 0) => {
   return q
 }
 
-const delta = (a, b, query) => {
+const delta = (a, b, query, n) => {
   if (query && query.op === 3) {
-    let u = new Encoder()
+    let u = new Encoder(n)
     return [[u._query(query)]]
   }
   let json = a
   const diffs = _calcDiff(a, b)
   let q = []
   for (let v of diffs) {
-    let u = new Encoder()
+    let u = new Encoder(n)
     let d = new Decoder()
     const _e = encode(json, u)
     const decoded = decode(_e, d)
@@ -637,10 +637,10 @@ const delta = (a, b, query) => {
     const res = p.update(_e, q2)
     json = res.json
   }
-  let u = new Encoder()
+  let u = new Encoder(n)
   if (query) {
     query.len = diffs.length
-    let u2 = new Encoder()
+    let u2 = new Encoder(n)
     let q2 = u2._query({
       op: 2,
       col: query.col,
@@ -661,32 +661,32 @@ class Bundle {
   async send() {
     await this.db.query(this)
   }
-  c(data, col, doc) {
+  c(data, col, doc, n) {
     this.data[col] ??= {}
-    let u2 = new Encoder()
+    let u2 = new Encoder(n)
     let q = u2._query({ op: 1, col, doc })
     this.q.push([q])
-    let u = new Encoder()
+    let u = new Encoder(n)
     encode(data, u)
     this.q.push(u.todump())
     this.data[col][doc] = data
     return this
   }
-  u(b, col, doc) {
+  u(b, col, doc, n) {
     const a = this.data[col][doc]
-    const { len, q } = delta(a, b, { op: 2, col, doc })
+    const { len, q } = delta(a, b, { op: 2, col, doc }, n)
     this.q = concat(this.q, q)
     this.data[col][doc] = b
     return this
   }
-  d(col, doc) {
-    const q = delta(null, null, { op: 3, col, doc })
+  d(col, doc, n) {
+    const q = delta(null, null, { op: 3, col, doc }, n)
     this.q = concat(this.q, q)
     delete this.data[col][doc]
     return this
   }
-  dump() {
-    let u = new Encoder()
+  dump(n) {
+    let u = new Encoder(n)
     return u._dump(this.q)
   }
 }
