@@ -23,8 +23,8 @@ How could beating the current status quo even be possible at all, let alone by a
 - **Simple, Deterministic, and Metadata-Efficient**  
   Despite its advanced compression capabilities, ARJSON is based on simple deterministic principles. With just a single scan, it dynamically applies bit-level optimizations, columnar reorganization, and delta packing without requiring multiple passes or complex heuristics. The deterministic order eliminates the need for unnecessary metadata, further reducing storage overhead and ensuring a compact and streamlined encoding process.
   
-- **Direct Data Extraction and ZK Compatibility**  
-  ARJSON’s structured encoding allows data to be accessed directly without full decoding, making it highly efficient for on-the-fly processing. This is especially important for zero-knowledge circuits (ZK circuits), where only arithmetic operations are allowed, eliminating the need for costly parsing. Additionally, ARJSON’s compact and predictable format enables EVM assembly-level optimizations, reducing gas costs and improving execution efficiency in blockchain environments.
+- **Absolute Minimum Incremental Only Upgrade of Immutable Data**  
+  ARJSON is purpose-built for efficient, permanent data upgrades. It enables absolute minimum, incremental bit-level updates to immutable data, making it ideal for frequently updated permanent databases. Instead of rewriting entire documents, ARJSON allows compact, append-only mutations that preserve historical integrity while minimizing storage costs.
 
 ## Bit Level Optimization
 
