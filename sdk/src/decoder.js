@@ -20,15 +20,20 @@ class Decoder {
   }
 
   leb128() {
-    let n = 0
-    let i = 0
-    let len_len = null
+    let result = 0
+    let shift = 0
+    let byte
     do {
-      len_len = this.n(8)
-      n += Math.pow(128, i) * (len_len >= 128 ? len_len - 128 : len_len)
-      i++
-    } while (len_len >= 128)
-    return n
+      byte = this.n(8)
+      // Use multiplication for shifts > 31 to avoid 32-bit limitation
+      if (shift < 32) {
+        result |= (byte & 0x7f) << shift
+      } else {
+        result += (byte & 0x7f) * Math.pow(2, shift)
+      }
+      shift += 7
+    } while (byte & 0x80)
+    return result
   }
 
   decode(v, count = null, update = false, query) {
@@ -121,10 +126,10 @@ class Decoder {
     const isNum = this.n(1)
     if (isNum) {
       const num = this.n(6)
-      this.json = num
       if (num < 63) {
+        this.json = num
       } else {
-        this.json += this.leb128()
+        this.json = 63 + this.leb128()
       }
     } else {
       const code = this.n(6)
