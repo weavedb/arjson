@@ -94,7 +94,14 @@ class Encoder {
   }
 
   _add(tar, len, val, vlen) {
-    val &= vlen >= 32 ? 0xffffffff : (1 << vlen) - 1
+    // Mask the value to the appropriate bit length
+    if (vlen >= 32) {
+      // For 32-bit values, ensure we handle JavaScript's number limitations
+      val = val >>> 0 // Convert to unsigned 32-bit
+    } else {
+      val &= (1 << vlen) - 1
+    }
+
     const used = len & 31
     const free = used === 0 ? 32 : 32 - used
     const idx = len >> 5
@@ -152,13 +159,14 @@ class Encoder {
       isDiff = diff < 7
     } else isDiff = diff < 4
     const v2 = isDiff ? diff : v
-    return (v2 << 1) | (isDiff ? 1 : 0)
+    // For large numbers, avoid bitwise operations
+    return v2 * 2 + (isDiff ? 1 : 0)
   }
 
   push_vlink(v) {
     let result = this.get_diff(v, this.prev_link)
     const isDiff = (result & 1) === 1
-    const v2 = result >>> 1
+    const v2 = Math.floor(result / 2)
     this.prev_link = v
     this.push_vflag(isDiff ? 1 : 0)
     this._push_vlink(v2, isDiff, this.dcount)
@@ -168,7 +176,7 @@ class Encoder {
   push_klink(v) {
     let result = this.get_diff(v, this.prev_klink)
     const isDiff = (result & 1) === 1
-    const v2 = result >>> 1
+    const v2 = Math.floor(result / 2)
     this.prev_klink = v
     this.push_kflag(isDiff ? 1 : 0)
     this._push_klink(v2, isDiff, this.dcount)
@@ -330,9 +338,16 @@ class Encoder {
   }
 
   push_int(v) {
+    // For very large numbers, skip differential encoding
+    if (v > 0xffffffff || this.prev_num > 0xffffffff) {
+      this.prev_num = v
+      this.dint(v, false)
+      return
+    }
+
     let result = this.get_diff(v, this.prev_num)
     const isDiff = (result & 1) === 1
-    const v2 = result >>> 1
+    const v2 = Math.floor(result / 2)
 
     this.prev_num = v
     this.dint(v2, isDiff)
