@@ -396,14 +396,14 @@ class Encoder {
   leb128_2_kvals(v) {
     while (v >= 128) {
       this.add_kvals((v & 0x7f) | 0x80, 8)
-      v >>>= 7
+      v = Math.floor(v / 128)
     }
     this.add_kvals(v, 8)
   }
   leb128_2_dc(v) {
     while (v >= 128) {
       this.add_dc((v & 0x7f) | 0x80, 8)
-      v >>>= 7
+      v = Math.floor(v / 128)
     }
     this.add_dc(v, 8)
   }
@@ -411,7 +411,7 @@ class Encoder {
   leb128_2_vals(v) {
     while (v >= 128) {
       this.add_vals((v & 0x7f) | 0x80, 8)
-      v >>>= 7
+      v = Math.floor(v / 128)
     }
     this.add_vals(v, 8)
   }
@@ -420,7 +420,7 @@ class Encoder {
     this.add_dc(3, 2)
     while (v >= 128) {
       this.add_dc((v & 0x7f) | 0x80, 8)
-      v >>>= 7
+      v = Math.floor(v / 128)
     }
     this.add_dc(v, 8)
   }
@@ -429,7 +429,7 @@ class Encoder {
     this.add_keys(3, 2)
     while (v >= 128) {
       this.add_keys((v & 0x7f) | 0x80, 8)
-      v >>>= 7
+      v = Math.floor(v / 128)
     }
     this.add_keys(v, 8)
   }
@@ -438,7 +438,7 @@ class Encoder {
     this.add_klinks(3, 2)
     while (v >= 128) {
       this.add_klinks((v & 0x7f) | 0x80, 8)
-      v >>>= 7
+      v = Math.floor(v / 128)
     }
     this.add_klinks(v, 8)
   }
@@ -447,7 +447,7 @@ class Encoder {
     this.add_vals(3, 2)
     while (v >= 128) {
       this.add_vals((v & 0x7f) | 0x80, 8)
-      v >>>= 7
+      v = Math.floor(v / 128)
     }
     this.add_vals(v, 8)
   }
@@ -456,7 +456,7 @@ class Encoder {
     this.add_kvals(3, 2)
     while (v >= 128) {
       this.add_kvals((v & 0x7f) | 0x80, 8)
-      v >>>= 7
+      v = Math.floor(v / 128)
     }
     this.add_kvals(v, 8)
   }
@@ -465,7 +465,7 @@ class Encoder {
     this.add_nums(3, 2)
     while (v >= 128) {
       this.add_nums((v & 0x7f) | 0x80, 8)
-      v >>>= 7
+      v = Math.floor(v / 128)
     }
     this.add_nums(v, 8)
   }
@@ -474,7 +474,7 @@ class Encoder {
     this.add_types(3, 2)
     while (v >= 128) {
       this.add_types((v & 0x7f) | 0x80, 8)
-      v >>>= 7
+      v = Math.floor(v / 128)
     }
     this.add_types(v, 8)
   }
@@ -483,7 +483,7 @@ class Encoder {
     this.add_vlinks(3, 2)
     while (v >= 128) {
       this.add_vlinks((v & 0x7f) | 0x80, 8)
-      v >>>= 7
+      v = Math.floor(v / 128)
     }
     this.add_vlinks(v, 8)
   }
