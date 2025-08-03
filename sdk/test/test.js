@@ -188,7 +188,12 @@ describe("ARJSON", function () {
   it.only("should encode and decode", () => {
     let d = new Decoder()
     let u = new Encoder(2)
-    let json = draft_07
+    let json = Date.now() //draft_07
+    json = {
+      body: "my first post!",
+      uid: "Rix7e0HB-8OAaimcoYkxTZB-dStgTOHWUik1DvKD5vM",
+      date: 1754178295976,
+    }
     const e = encode(json, u)
     const decoded = decode(e, d)
     console.log(decoded)
