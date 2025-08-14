@@ -185,7 +185,11 @@ const draft_07 = {
   },
 }
 describe("ARJSON", function () {
-  it.only("should encode and decode", () => {
+  it.only("should delta upgrade", () => {
+    const aj = json(null, { val: 1 })
+    console.log(aj.update({ val2: 2 }))
+  })
+  it("should encode and decode", () => {
     let d = new Decoder()
     let u = new Encoder(2)
     let json = Date.now() //draft_07
@@ -208,7 +212,7 @@ describe("ARJSON", function () {
     const aj2 = json(aj.deltas())
     assert.deepEqual(aj2.json(), { val: 5, val2: 6 })
   })
-  it("should calculate delta of 2 objects", () => {
+  it.only("should calculate delta of 2 objects", () => {
     let d = new Decoder()
     const a = { a: 3, e: { f: 5, t: 7 }, g: [1, 3], dc: false }
     const b = { e: { f: 6, a: 7 }, g: [1, 2, { y: 3 }], abc: true, dc: null }
