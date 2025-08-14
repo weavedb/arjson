@@ -21,6 +21,7 @@ function frombits(bitArray) {
 
   return result
 }
+
 function tobits(arr, cursor = 0) {
   let bitStr = ""
   for (let i = 0; i < arr.length; i++) {
@@ -81,48 +82,160 @@ function parsePath(path) {
   const result = []
   let currentKey = ""
   let i = 0
+  let inBrackets = false
+  let bracketContent = ""
 
   while (i < path.length) {
-    if (path[i] === ".") {
-      if (currentKey) {
-        result.push(currentKey)
-        currentKey = ""
-      }
-      i++
-      continue
-    }
-    if (path[i] === "[") {
-      if (currentKey) {
-        result.push(currentKey)
-        currentKey = ""
-      }
-      i++
-      let indexStr = ""
-      while (i < path.length && path[i] !== "]") {
-        if (!/\d/.test(path[i])) {
-          throw new Error(`Invalid array index at position ${i}`)
+    const char = path[i]
+
+    if (!inBrackets) {
+      if (char === ".") {
+        // End of a key segment
+        if (currentKey) {
+          result.push(currentKey)
+          currentKey = ""
         }
-        indexStr += path[i]
         i++
+        continue
       }
 
-      if (i >= path.length || path[i] !== "]") {
-        throw new Error("Missing closing bracket for array index")
+      if (char === "[") {
+        // Check if this is the start of an array index or part of a key name
+        // Look ahead to see if content is purely numeric
+        let j = i + 1
+        let content = ""
+        let foundClosing = false
+
+        while (j < path.length && path[j] !== "]") {
+          content += path[j]
+          j++
+        }
+
+        if (j < path.length && path[j] === "]") {
+          foundClosing = true
+        }
+
+        // Check if content is a valid array index (pure number)
+        if (foundClosing && /^\d+$/.test(content)) {
+          // It's an array index
+          if (currentKey) {
+            result.push(currentKey)
+            currentKey = ""
+          }
+          result.push(parseInt(content, 10))
+          i = j + 1 // Skip past the closing bracket
+          continue
+        } else {
+          // It's part of the key name, treat it as a regular character
+          currentKey += char
+          i++
+          continue
+        }
       }
-      result.push(parseInt(indexStr, 10))
+
+      // Regular character, add to current key
+      currentKey += char
+      i++
+    }
+  }
+
+  // Don't forget the last key
+  if (currentKey) {
+    result.push(currentKey)
+  }
+
+  return result
+}
+
+// Alternative implementation that's more explicit about escaping
+function parsePathStrict(path) {
+  if (!path) return []
+
+  const result = []
+  let currentKey = ""
+  let i = 0
+  let escaped = false
+
+  while (i < path.length) {
+    const char = path[i]
+
+    if (escaped) {
+      // Add the escaped character literally
+      currentKey += char
+      escaped = false
       i++
       continue
     }
-    currentKey += path[i]
+
+    if (char === "\\") {
+      // Next character is escaped
+      escaped = true
+      i++
+      continue
+    }
+
+    if (char === ".") {
+      // End of a key segment
+      if (currentKey) {
+        result.push(currentKey)
+        currentKey = ""
+      }
+      i++
+      continue
+    }
+
+    if (char === "[") {
+      // Only treat as array index if we have a complete key before it
+      // and the content is numeric
+      if (currentKey) {
+        result.push(currentKey)
+        currentKey = ""
+      }
+
+      // Find the closing bracket
+      let j = i + 1
+      let indexStr = ""
+
+      while (j < path.length && path[j] !== "]") {
+        indexStr += path[j]
+        j++
+      }
+
+      if (j >= path.length) {
+        // No closing bracket found, treat [ as part of key
+        currentKey += char
+        i++
+        continue
+      }
+
+      // Check if it's a valid number
+      if (/^\d+$/.test(indexStr)) {
+        result.push(parseInt(indexStr, 10))
+        i = j + 1 // Skip past ]
+      } else {
+        // Not a valid array index, treat as part of key name
+        currentKey += path.substring(i, j + 1)
+        i = j + 1
+      }
+      continue
+    }
+
+    // Regular character
+    currentKey += char
     i++
   }
-  if (currentKey) result.push(currentKey)
+
+  // Add the last segment if any
+  if (currentKey) {
+    result.push(currentKey)
+  }
 
   return result
 }
 
 export {
   parsePath,
+  parsePathStrict,
   getPrecision,
   bits,
   tobits,

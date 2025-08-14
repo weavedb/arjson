@@ -396,8 +396,19 @@ class Parser {
     let init = [[], []]
     let type = key => (typeof key[0] === "string" ? 2 : key[0])
 
-    let set = k => (init[k[0]][k[1]] = true)
-    let ex = k => init[k[0]][k[1]] === true
+    let set = k => {
+      if (k && k[0] !== null && k[0] !== undefined && k[1] !== undefined) {
+        init[k[0]][k[1]] = true
+        return true
+      }
+      return false
+    }
+    let ex = k => {
+      if (k && k[0] !== null && k[0] !== undefined && k[1] !== undefined) {
+        return init[k[0]][k[1]] === true
+      }
+      return false
+    }
     let i3 = -1
     for (let v of this.vrefs) {
       let recIndex = null
@@ -576,6 +587,11 @@ const _calcDiff = (a, b, path = "", depth = 0) => {
   if (!is(Object, a) || !is(Object, b))
     return [{ path, op: "replace", from: a, to: b }]
   if (Array.isArray(a) && Array.isArray(b)) {
+    // If arrays have different lengths, just replace the whole array
+    if (a.length !== b.length) {
+      return [{ path, op: "replace", from: a, to: b }]
+    }
+
     const max = Math.max(a.length, b.length)
     let count = 0
     let diff = null
