@@ -1,9 +1,10 @@
 import { Encoder, encode } from "./encoder.js"
 import { Decoder, decode } from "./decoder.js"
 import { Parser, delta } from "./parser.js"
+import { clone } from "ramda"
 
 export default (deltas, _json, n) => {
-  let json = clone(_json)
+  let json = structuredClone(_json)
   let enc = new Encoder(n)
   deltas = deltas || []
   let encoded = null
