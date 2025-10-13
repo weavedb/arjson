@@ -25,12 +25,14 @@ class Decoder {
     let byte
     do {
       byte = this.n(8)
+      result += (byte & 0x7f) * Math.pow(2, shift)
       // Use multiplication for shifts > 31 to avoid 32-bit limitation
+      /*
       if (shift < 32) {
         result |= (byte & 0x7f) << shift
       } else {
         result += (byte & 0x7f) * Math.pow(2, shift)
-      }
+      }*/
       shift += 7
     } while (byte & 0x80)
     return result
