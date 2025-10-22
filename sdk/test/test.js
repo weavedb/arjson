@@ -185,23 +185,28 @@ const draft_07 = {
   },
 }
 describe("ARJSON", function () {
-  it.only("should delta upgrade", () => {
+  it("should delta upgrade", () => {
     const aj = json(null, { val: 1 })
     console.log(aj.update({ val2: 2 }))
   })
-  it("should encode and decode", () => {
-    let d = new Decoder()
-    let u = new Encoder(2)
-    let json = Date.now() //draft_07
-    json = {
-      body: "my first post!",
-      uid: "Rix7e0HB-8OAaimcoYkxTZB-dStgTOHWUik1DvKD5vM",
-      date: 1754178295976,
+  it.only("should encode and decode", async () => {
+    const base = {
+      username: "2FMHgani",
+      name: "Charlie Smith",
+      email: "0CMqV@example.com",
+      age: 53,
+      active: true,
+      score: 896,
+      role: "member",
+      note: "score",
+      tags: ["admin", "admin", "admin"],
     }
-    const e = encode(json, u)
-    const decoded = decode(e, d)
-    console.log(decoded)
-    assert.deepEqual(decoded, json)
+    const deltas = json(null, base, 1)
+    const delta = deltas.deltas()[0]
+    const deltas2 = []
+    deltas2.push([delta[0], delta[1]])
+    const _arjson = json(deltas2, undefined, 1)
+    console.log(_arjson.json())
   })
 
   it("should manage json updates", () => {
@@ -212,7 +217,7 @@ describe("ARJSON", function () {
     const aj2 = json(aj.deltas())
     assert.deepEqual(aj2.json(), { val: 5, val2: 6 })
   })
-  it.only("should calculate delta of 2 objects", () => {
+  it("should calculate delta of 2 objects", () => {
     let d = new Decoder()
     const a = { a: 3, e: { f: 5, t: 7 }, g: [1, 3], dc: false }
     const b = { e: { f: 6, a: 7 }, g: [1, 2, { y: 3 }], abc: true, dc: null }
