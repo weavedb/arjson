@@ -1,14 +1,15 @@
 import { Encoder, encode } from "./encoder.js"
 import { Decoder, decode } from "./decoder.js"
-import { Parser, delta } from "./parser.js"
+import { Parser } from "./parser.js"
 import { clone } from "ramda"
 
+// delta is array.... it should be buffer
 export default (deltas, _json, n) => {
   let json = structuredClone(_json)
   let enc = new Encoder(n)
   deltas = deltas || []
   let encoded = null
-
+  /*
   const update = new_json => {
     if (!encoded) encoded = encode(json, enc)
     const { len, q } = delta(json, new_json, undefined, n)
@@ -17,12 +18,15 @@ export default (deltas, _json, n) => {
     let d = new Decoder()
     decode(encoded, d)
     let p = new Parser(d.cols())
+    console.log("this is the only update...........................")
     json = p.update(encoded, _delta, len, n).json
+    // this is the issue, encoded should be cummulative
     encoded = encode(json, enc)
     return [len, _delta]
   }
-
+*/
   const patch = v => {
+    // 3rd time fails for missing links because of encoded
     let d = new Decoder()
     decode(encoded, d)
     let p = new Parser(d.cols())

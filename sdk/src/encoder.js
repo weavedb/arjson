@@ -2,13 +2,12 @@ import { getPrecision, bits, tobits, strmap, base64 } from "./utils.js"
 
 class Encoder {
   constructor(n = 1) {
-    this._initArrays(n) // Start with user-provided size or minimal default
+    this._initArrays(n)
     this.strMap = new Map()
     this.bitsLookup = new Uint8Array(17)
     for (let i = 0; i < 17; i++) {
       this.bitsLookup[i] = i === 0 ? 1 : 32 - Math.clz32(i)
     }
-    this.reset()
   }
 
   _initArrays(n) {
@@ -27,15 +26,60 @@ class Encoder {
     this.dc = new Uint32Array(32 * n)
     this.kvals = new Uint32Array(64 * n)
     this.vals = new Uint32Array(64 * n)
+    this.capacity = n
   }
 
-  _growArray(name, oldArray) {
-    const newArray = new Uint32Array(oldArray.length * 2)
-    newArray.set(oldArray)
-    /*console.log(
-      `[Encoder Growth] ${name}: ${oldArray.length} → ${newArray.length}`,
-    )*/
-    return newArray
+  _grow() {
+    const newCapacity = this.capacity * 2
+    const old_kc_counts = this.kc_counts
+    const old_vc_counts = this.vc_counts
+    const old_kc_diffs = this.kc_diffs
+    const old_vc_diffs = this.vc_diffs
+    const old_vlinks = this.vlinks
+    const old_klinks = this.klinks
+    const old_vflags = this.vflags
+    const old_kflags = this.kflags
+    const old_bools = this.bools
+    const old_keys = this.keys
+    const old_types = this.types
+    const old_nums = this.nums
+    const old_dc = this.dc
+    const old_kvals = this.kvals
+    const old_vals = this.vals
+
+    this.kc_counts = new Uint32Array(32 * newCapacity)
+    this.vc_counts = new Uint32Array(32 * newCapacity)
+    this.kc_diffs = new Uint32Array(4 * newCapacity)
+    this.vc_diffs = new Uint32Array(4 * newCapacity)
+    this.vlinks = new Uint32Array(32 * newCapacity)
+    this.klinks = new Uint32Array(32 * newCapacity)
+    this.vflags = new Uint32Array(16 * newCapacity)
+    this.kflags = new Uint32Array(16 * newCapacity)
+    this.bools = new Uint32Array(16 * newCapacity)
+    this.keys = new Uint32Array(32 * newCapacity)
+    this.types = new Uint32Array(32 * newCapacity)
+    this.nums = new Uint32Array(32 * newCapacity)
+    this.dc = new Uint32Array(32 * newCapacity)
+    this.kvals = new Uint32Array(64 * newCapacity)
+    this.vals = new Uint32Array(64 * newCapacity)
+
+    this.kc_counts.set(old_kc_counts)
+    this.vc_counts.set(old_vc_counts)
+    this.kc_diffs.set(old_kc_diffs)
+    this.vc_diffs.set(old_vc_diffs)
+    this.vlinks.set(old_vlinks)
+    this.klinks.set(old_klinks)
+    this.vflags.set(old_vflags)
+    this.kflags.set(old_kflags)
+    this.bools.set(old_bools)
+    this.keys.set(old_keys)
+    this.types.set(old_types)
+    this.nums.set(old_nums)
+    this.dc.set(old_dc)
+    this.kvals.set(old_kvals)
+    this.vals.set(old_vals)
+
+    this.capacity = newCapacity
   }
 
   fastBits(n) {
@@ -45,9 +89,7 @@ class Encoder {
   vc_diffs_set(index, value) {
     const wordIndex = index >>> 5
     const bitOffset = index & 31
-    if (wordIndex >= this.vc_diffs.length) {
-      this.vc_diffs = this._growArray("vc_diffs", this.vc_diffs)
-    }
+    if (wordIndex >= this.vc_diffs.length) this._grow()
     if (value) {
       this.vc_diffs[wordIndex] |= 1 << bitOffset
     } else {
@@ -62,9 +104,7 @@ class Encoder {
   kc_diffs_set(index, value) {
     const wordIndex = index >>> 5
     const bitOffset = index & 31
-    if (wordIndex >= this.kc_diffs.length) {
-      this.kc_diffs = this._growArray("kc_diffs", this.kc_diffs)
-    }
+    if (wordIndex >= this.kc_diffs.length) this._grow()
     if (value) {
       this.kc_diffs[wordIndex] |= 1 << bitOffset
     } else {
@@ -79,93 +119,85 @@ class Encoder {
 
   add_vlinks(val, vlen) {
     const maxIdx = (this.vlinks_len >> 5) + Math.ceil(vlen / 32) + 1
-    if (maxIdx >= this.vlinks.length) {
-      this.vlinks = this._growArray("vlinks", this.vlinks)
-    }
+    if (maxIdx >= this.vlinks.length) this._grow()
     this.vlinks_len = this._add(this.vlinks, this.vlinks_len, val, vlen)
   }
   add_klinks(val, vlen) {
     const maxIdx = (this.klinks_len >> 5) + Math.ceil(vlen / 32) + 1
-    if (maxIdx >= this.klinks.length) {
-      this.klinks = this._growArray("klinks", this.klinks)
-    }
+    if (maxIdx >= this.klinks.length) this._grow()
     this.klinks_len = this._add(this.klinks, this.klinks_len, val, vlen)
   }
   add_vflags(val, vlen) {
     const maxIdx = (this.vflags_len >> 5) + Math.ceil(vlen / 32) + 1
-    if (maxIdx >= this.vflags.length) {
-      this.vflags = this._growArray("vflags", this.vflags)
-    }
+    if (maxIdx >= this.vflags.length) this._grow()
     this.vflags_len = this._add(this.vflags, this.vflags_len, val, vlen)
   }
   add_kflags(val, vlen) {
     const maxIdx = (this.kflags_len >> 5) + Math.ceil(vlen / 32) + 1
-    if (maxIdx >= this.kflags.length) {
-      this.kflags = this._growArray("kflags", this.kflags)
-    }
+    if (maxIdx >= this.kflags.length) this._grow()
     this.kflags_len = this._add(this.kflags, this.kflags_len, val, vlen)
   }
   add_bools(val, vlen) {
     const maxIdx = (this.bools_len >> 5) + Math.ceil(vlen / 32) + 1
-    if (maxIdx >= this.bools.length) {
-      this.bools = this._growArray("bools", this.bools)
-    }
+    if (maxIdx >= this.bools.length) this._grow()
     this.bools_len = this._add(this.bools, this.bools_len, val, vlen)
   }
   add_keys(val, vlen) {
     const maxIdx = (this.keys_len >> 5) + Math.ceil(vlen / 32) + 1
-    if (maxIdx >= this.keys.length) {
-      this.keys = this._growArray("keys", this.keys)
-    }
+    if (maxIdx >= this.keys.length) this._grow()
     this.keys_len = this._add(this.keys, this.keys_len, val, vlen)
   }
   add_types(val, vlen) {
     const maxIdx = (this.types_len >> 5) + Math.ceil(vlen / 32) + 1
-    if (maxIdx >= this.types.length) {
-      this.types = this._growArray("types", this.types)
-    }
+    if (maxIdx >= this.types.length) this._grow()
     this.types_len = this._add(this.types, this.types_len, val, vlen)
   }
   add_nums(val, vlen) {
     const maxIdx = (this.nums_len >> 5) + Math.ceil(vlen / 32) + 1
-    if (maxIdx >= this.nums.length) {
-      this.nums = this._growArray("nums", this.nums)
-    }
+    if (maxIdx >= this.nums.length) this._grow()
     this.nums_len = this._add(this.nums, this.nums_len, val, vlen)
   }
   add_dc(val, vlen) {
     const maxIdx = (this.dc_len >> 5) + Math.ceil(vlen / 32) + 1
-    if (maxIdx >= this.dc.length) {
-      this.dc = this._growArray("dc", this.dc)
-    }
+    if (maxIdx >= this.dc.length) this._grow()
     this.dc_len = this._add(this.dc, this.dc_len, val, vlen)
   }
   add_kvals(val, vlen) {
     const maxIdx = (this.kvals_len >> 5) + Math.ceil(vlen / 32) + 1
-    if (maxIdx >= this.kvals.length) {
-      this.kvals = this._growArray("kvals", this.kvals)
-    }
+    if (maxIdx >= this.kvals.length) this._grow()
     this.kvals_len = this._add(this.kvals, this.kvals_len, val, vlen)
   }
   add_vals(val, vlen) {
     const maxIdx = (this.vals_len >> 5) + Math.ceil(vlen / 32) + 1
-    if (maxIdx >= this.vals.length) {
-      this.vals = this._growArray("vals", this.vals)
-    }
+    if (maxIdx >= this.vals.length) this._grow()
     this.vals_len = this._add(this.vals, this.vals_len, val, vlen)
   }
 
   _add(tar, len, val, vlen) {
-    // Mask the value to the appropriate bit length
-    if (vlen >= 32) {
-      val = val >>> 0
-    } else {
-      val &= (1 << vlen) - 1
-    }
-
+    if (vlen >= 32) val = val >>> 0
+    else val &= (1 << vlen) - 1
     const used = len & 31
     const free = used === 0 ? 32 : 32 - used
     const idx = len >> 5
+    let maxIdx = idx + 1
+    if (vlen > free) {
+      const remaining = vlen - free
+      maxIdx = idx + 1 + Math.ceil(remaining / 32)
+    }
+    while (maxIdx >= tar.length) {
+      this._grow()
+      if (tar === this.vlinks) tar = this.vlinks
+      else if (tar === this.klinks) tar = this.klinks
+      else if (tar === this.vflags) tar = this.vflags
+      else if (tar === this.kflags) tar = this.kflags
+      else if (tar === this.bools) tar = this.bools
+      else if (tar === this.keys) tar = this.keys
+      else if (tar === this.types) tar = this.types
+      else if (tar === this.nums) tar = this.nums
+      else if (tar === this.dc) tar = this.dc
+      else if (tar === this.kvals) tar = this.kvals
+      else if (tar === this.vals) tar = this.vals
+    }
 
     if (vlen <= free) {
       if (used === 0) tar[idx] = val
@@ -295,9 +327,7 @@ class Encoder {
   }
 
   _push_vlink(v, diff, count) {
-    if (this.vc_count >= this.vc_counts.length) {
-      this.vc_counts = this._growArray("vc_counts", this.vc_counts)
-    }
+    if (this.vc_count >= this.vc_counts.length) this._grow()
     if (this.vc_v === null) {
       this.vc_v = v
       this.vc_diffs_set(0, diff ? 1 : 0)
@@ -350,9 +380,7 @@ class Encoder {
   }
 
   _push_klink(v, diff, count) {
-    if (this.kc_count >= this.kc_counts.length) {
-      this.kc_counts = this._growArray("kc_counts", this.kc_counts)
-    }
+    if (this.kc_count >= this.kc_counts.length) this._grow()
     if (this.kc_v === null) {
       this.kc_v = v
       this.kc_diffs_set(0, diff ? 1 : 0)
@@ -370,22 +398,21 @@ class Encoder {
       this.kc_count = 1
     }
   }
-
   push_type(obj) {
     if (obj === null) return
     let v = null
     let index = null
     let push = null
-    if (obj !== null) {
-      ;[v, index, push] = obj
-    }
+    if (obj !== null) [v, index, push] = obj
     if (push !== null) {
+      // breaking
       this.add_types(0, 3)
       this.short_types(0)
       this.add_types(2, 3)
       this.short_types(push)
       this.add_types(v, 3)
     } else if (index !== null) {
+      // breaking
       this.add_types(0, 3)
       this.short_types(0)
       this.add_types(1, 3)
@@ -641,9 +668,15 @@ class Encoder {
     } else this.leb128_vlinks(v)
   }
 
-  reset() {
+  reset(strmap) {
     this.strMap.clear()
     this.str_len = 0
+    if (strmap) {
+      for (const k in strmap) {
+        this.strMap.set(strmap[k], +k)
+        this.str_len++
+      }
+    }
     this.prev_bits = 1
     this.prev_kbits = 1
     this.prev_num = 0
@@ -885,8 +918,8 @@ function pushPathNum(u, prev = null, keylen, index = null) {
   u.dcount++
 }
 
-function encode(v, u, query) {
-  u.reset()
+function encode(v, u, query, strmap) {
+  u.reset(strmap)
   if (typeof v === "undefined") {
     u.single = false
     u.push_type(_encode(v, u))
@@ -970,6 +1003,7 @@ function _encode(
   push = null,
   update = false,
   op,
+  strmap,
 ) {
   if (typeof v === "undefined") {
     if (prev !== null) u.push_vlink(prev + 1)
@@ -1019,6 +1053,7 @@ function _encode(
     )
       u.push_type(prev_type)
     else u.tcount++
+    return [1, index, push]
     if (update) {
       if (op?.op === "merge") {
         u.add_types(0, 2)
@@ -1030,13 +1065,10 @@ function _encode(
       } else if (typeof index === "number") {
         u.add_types(2, 2)
         u.short_types(index)
-      } else {
-        u.add_types(1, 2)
-      }
+      } else u.add_types(1, 2)
+
       return null
-    } else {
-      return [1, index, push]
-    }
+    } else return [1, index, push]
   } else if (typeof v === "string") {
     let ktype = 7
     if (prev !== null) u.push_vlink(prev + 1)
