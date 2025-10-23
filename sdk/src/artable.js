@@ -5,7 +5,7 @@ import { Builder, getVal } from "./builder.js"
 import { mergeLeft } from "ramda"
 
 class ARTable {
-  cols() {
+  table() {
     return {
       vrefs: this.vrefs,
       krefs: this.krefs,
@@ -212,29 +212,33 @@ class ARTable {
     d4.strmap = mergeLeft(d3.strmap, d4.strmap)
     artable.strmap = d4.strmap
     this.strmap = d4.strmap
-    const builder = new Builder(this.cols())
+    const builder = new Builder(this.table())
     const json = builder.build()
-    artable = builder.cols()
+    artable = builder.table()
     return { left: frombits(left2), json, artable }
   }
+  build() {
+    const builder = new Builder(this.table())
+    return builder.build()
+  }
 
-  update(obj, q, len, n) {
+  update(q, artable, len, n) {
+    artable ??= this.table()
     if (!q) return null
-    const d = new Decoder()
     let res = null
     let _json = null
     let i = 0
     let left = null
     do {
-      res = this.encode(obj, q)
+      res = this.encode(artable, q)
       _json = res.json
       q = res.left
       left = res.left
-      obj = res.artable
+      artable = res.artable
       i++
     } while (q.length > 0 && typeof len === "number" && i < len)
     this.buildMap()
-    return { json: _json, left, artable: obj }
+    return { json: _json, left, artable }
   }
 }
 

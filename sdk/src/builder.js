@@ -1,5 +1,5 @@
 class Builder {
-  cols() {
+  table() {
     return {
       vrefs: this.vrefs,
       krefs: this.krefs,
