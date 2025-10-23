@@ -1,3 +1,4 @@
+import { frombits } from "./utils.js"
 import { Encoder, encode } from "./encoder.js"
 import { Decoder, decode } from "./decoder.js"
 import { ARTable } from "./artable.js"
@@ -63,22 +64,29 @@ const diff = (a, b, path = "", depth = 0) => {
 }
 
 export class ARJSON {
-  constructor({ json, arj }) {
-    if (arj) this.arj = arj
-    else this.arj = enc(json)
+  constructor({ json, arj, table }) {
     const d = new Decoder()
-    decode(this.arj, d)
-    this.json = d.json
-    this.artable = new ARTable(d.cols())
-    this.deltas = [this.arj]
-  }
-  buffer() {
-    return Buffer.concat(this.deltas.map(arr => Buffer.from(arr)))
+    if (table) {
+      this.artable = new ARTable(table)
+      this.json = this.artable.build()
+    } else if (arj) {
+      let left = frombits(d.decode(arj))
+      this.artable = new ARTable(d.table())
+      while (left.length > 0) {
+        ;({ left, json } = this.artable.update(left))
+        this.json = json
+      }
+    } else {
+      this.json = json
+      arj = enc(json)
+      decode(arj, d)
+      this.artable = new ARTable(d.table())
+    }
+    this.deltas = [arj]
   }
   update(new_json) {
-    const diffs = diff(this.json, new_json)
     let deltas = []
-    for (const v of diffs) {
+    for (const v of diff(this.json, new_json)) {
       if (
         v.path === "" &&
         (!is(Object, v.from) ||
@@ -94,18 +102,22 @@ export class ARJSON {
         decode(newArj, d, null, this.artable.strmap)
         this.artable.strmap = mergeLeft(u.strMap, this.artable.strmap)
         this.json = d.json
-        this.artable = d.cols()
         this.artable.strmap = this.artable.strmap
-        this.artable = new ARTable(this.artable)
         continue
       }
-      const { query, strmap } = this.artable.query(v.path, v.to)
-      deltas.push(query)
-      const res = this.artable.update(this.artable, query)
-      this.json = res.json
-      console.log("[result]", this.json)
-      console.log()
+      const { query } = this.artable.query(v.path, v.to)
+      this.load(query)
     }
-    this.deltas = concat(this.deltas, deltas)
+  }
+  load(query) {
+    const { json } = this.artable.update(query)
+    this.json = json
+    this.deltas.push(query)
+  }
+  buffer() {
+    return Buffer.concat(this.deltas.map(arr => Buffer.from(arr)))
+  }
+  table() {
+    return this.artable.table()
   }
 }

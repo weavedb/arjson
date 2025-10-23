@@ -96,6 +96,7 @@ class Decoder {
       this.buildStrMap()
       if (!this.nobuild) this.build()
     }
+    if (this.c % 8 !== 0) this.c += 8 - (this.c % 8)
     return tobits(this.o, this.c)
   }
 
@@ -197,7 +198,7 @@ class Decoder {
     this.len = this.short()
   }
 
-  cols() {
+  table() {
     return {
       vrefs: this.vrefs,
       krefs: this.krefs,
@@ -492,9 +493,9 @@ class Decoder {
   }
 
   build() {
-    const builder = new Builder(this.cols())
+    const builder = new Builder(this.table())
     this.json = builder.build()
-    const artable = builder.cols()
+    const artable = builder.table()
     for (let k in artable) this[k] = artable[k]
     return this.json
   }
