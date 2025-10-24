@@ -5,7 +5,7 @@ class Builder {
       krefs: this.krefs,
       ktypes: this.ktypes,
       keys: this.keys,
-      types: this.types,
+      vtypes: this.vtypes,
       bools: this.bools,
       nums: this.nums,
       strs: this.strs,
@@ -16,7 +16,7 @@ class Builder {
   constructor({
     ktypes,
     keys,
-    types,
+    vtypes,
     bools,
     nums,
     strs,
@@ -28,14 +28,17 @@ class Builder {
     this.ktypes = ktypes
     this.vrefs = vrefs
     this.krefs = krefs
-    this.types = types
+    this.vtypes = vtypes
     this.nums = nums
     this.strs = strs
     this.bools = bools
     this.keys = keys
   }
-
   obj_merge(json, k, val) {
+    if (val.__del__) {
+      delete json[k]
+      return
+    }
     if (val.__merge__) {
       for (let k2 in val.__val__) {
         if (typeof val.__val__[k2] === "undefined") delete json[k][k2]
@@ -383,7 +386,7 @@ const getKey = (i, keys, obj) => {
 }
 
 const getVal = (i, obj) => {
-  let type = obj.types[i]
+  let type = obj.vtypes[i]
   let val = null
   let replace = null
   let push = null

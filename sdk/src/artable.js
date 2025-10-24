@@ -1,8 +1,8 @@
 import { parsePath, bits, frombits } from "./utils.js"
-import { Encoder, encode, _encode, pushPathStr } from "./encoder.js"
-import { decode, Decoder } from "./decoder.js"
+import { Encoder, _encode, pushPathStr } from "./encoder.js"
+import { Decoder } from "./decoder.js"
 import { Builder, getVal } from "./builder.js"
-import { mergeLeft } from "ramda"
+import { mergeLeft, includes } from "ramda"
 
 class ARTable {
   table() {
@@ -11,7 +11,7 @@ class ARTable {
       krefs: this.krefs,
       ktypes: this.ktypes,
       keys: this.keys,
-      types: this.types,
+      vtypes: this.vtypes,
       bools: this.bools,
       nums: this.nums,
       strs: this.strs,
@@ -22,7 +22,7 @@ class ARTable {
   constructor({
     ktypes,
     keys,
-    types,
+    vtypes,
     bools,
     nums,
     strs,
@@ -34,14 +34,168 @@ class ARTable {
     this.ktypes = ktypes
     this.vrefs = vrefs
     this.krefs = krefs
-    this.types = types
+    this.vtypes = vtypes
     this.nums = nums
     this.strs = strs
     this.bools = bools
     this.keys = keys
     this.buildMap()
   }
+  compact(t1, t2) {
+    const stats = {}
+    let i = 0
+    let nc = 0
+    let sc = 0
+    let bc = 0
+    const pmap = {}
+    const getP = (t1, v, arr) => {
+      arr.push({ i: v - 2, v: t1.krefs[v - 2] ?? null })
+      if (t1.krefs[v - 2]) getP(t1, t1.krefs[v - 2], arr)
+    }
+    let i3 = 0
+    for (const v of t1.vrefs) {
+      if (!pmap[v]) {
+        pmap[v] = { indexes: {} }
+        let arr = []
+        getP(t1, v, arr)
+        pmap[v].arr = arr
+      }
+      pmap[v].indexes[i3] = true
+      i3++
+    }
+    for (let k in pmap) {
+      pmap[k].vs = {}
+      for (let v of pmap[k].arr) pmap[k].vs[v.i] = true
+    }
+    const imap = {}
+    for (const v of t1.vrefs) {
+      imap[v] ??= []
+      imap[v].push(i)
+      const vtype = t1.vtypes[i]
+      if (typeof vtype === "number") {
+        if (includes(vtype, [4, 5, 6]))
+          stats[i] = { vtype: "nums", i: nc, val: t1.nums[nc++] }
+        else if (includes(vtype, [2, 7]))
+          stats[i] = { vtype: "strs", i: sc, val: t1.strs[sc++] }
+        else if (vtype === 3)
+          stats[i] = { vtype: "bools", i: bc, val: t1.bools[bc++] }
+        else if (vtype === 0) {
+          stats[i] = { vtype: "delete" }
+        }
+      }
+      i++
+    }
 
+    const removal = { vrefs: {}, vtypes: {} }
+    let removed = {}
+    const remove = i2 => {
+      removal.vrefs[i2] = true
+      removal.vtypes[i2] = true
+      if (stats[i2] && stats[i2].vtype !== "delete") {
+        removal[stats[i2].vtype] ??= {}
+        removal[stats[i2].vtype][stats[i2].i] = true
+      }
+      removed[i2] = true
+    }
+    i = 0
+    for (const v of t2.vrefs) {
+      const _imap = imap[v] ?? []
+      for (const i2 of _imap) remove(i2)
+      i++
+    }
+    let i2 = 0
+
+    for (const v of t1.vtypes) {
+      if (v === 0) {
+        remove(i2)
+        const ki = t1.vrefs[i2] - 2
+        for (let k in pmap) {
+          if (pmap[k].vs[ki]) {
+            for (let k2 in pmap[k].indexes) if (removed[k2] !== true) remove(k2)
+          }
+        }
+      }
+      i2++
+    }
+    for (let k in removal) {
+      let arr = []
+      let i = 0
+      if (t1[k]) {
+        for (let v of t1[k]) {
+          if (!removal[k][i]) arr.push(v)
+          i++
+        }
+        t1[k] = arr
+      }
+    }
+    for (const v in t2) {
+      if (Array.isArray(t2[v])) this[v] = t1[v].concat(t2[v])
+      else this[v] = mergeLeft(t2[v], t1[v])
+    }
+    this.compactKeys()
+  }
+  compactKeys() {
+    let t = this.table()
+    const _keys = {}
+    const getP = (t1, v) => {
+      if (typeof t1.krefs[v - 2] !== "undefined") {
+        _keys[v - 2] = true
+        getP(t1, t1.krefs[v - 2])
+      }
+    }
+    for (const v of t.vrefs) getP(t, v)
+
+    // Build mapping of old indices to new indices
+    const indexMap = {}
+    let newIndex = 0
+
+    // Root always stays at 0
+    if (t.ktypes.length > 0) {
+      indexMap[-1] = -1
+      newIndex = 0
+    }
+
+    for (let i = 0; i < t.krefs.length; i++) {
+      if (_keys[i]) {
+        indexMap[i] = newIndex
+        newIndex++
+      }
+    }
+
+    let i = 0
+    let krefs = []
+    let ktypes = []
+    let keys = []
+
+    if (t.ktypes.length > 0) {
+      ktypes.push(t.ktypes[0])
+      keys.push(t.keys[0])
+    }
+
+    for (const v of t.krefs) {
+      if (_keys[i]) {
+        const remappedRef =
+          typeof indexMap[v - 2] !== "undefined" ? indexMap[v - 2] + 2 : v
+        krefs.push(remappedRef)
+        ktypes.push(t.ktypes[i + 1])
+        keys.push(t.keys[i + 1])
+      }
+      i++
+    }
+
+    // Remap vrefs
+    const vrefs = t.vrefs.map(v => {
+      const oldIndex = v - 2
+      return typeof indexMap[oldIndex] !== "undefined"
+        ? indexMap[oldIndex] + 2
+        : v
+    })
+
+    this.krefs = krefs
+    this.ktypes = ktypes
+    this.keys = keys
+    this.vrefs = vrefs
+  }
   buildMap() {
     this.keymap = {}
     this.nc = 0
@@ -69,7 +223,10 @@ class ARTable {
       let _prev = null
       for (const p of v) {
         let type = null
-        const k = this.keys[p - 1]
+        let k = this.keys[p - 1]
+        if (Array.isArray(k) && k.length === 1 && typeof k[0] === "number") {
+          k = this.strmap[k[0].toString()]
+        }
         if (Array.isArray(k)) type = "op"
         else if (typeof k === "number")
           type = this.ktypes[p - 1][0] === 0 ? "arr" : "map"
@@ -160,7 +317,7 @@ class ARTable {
     return index
   }
 
-  query(path, v, op = null, n) {
+  delta(path, v, op = null, n) {
     const u = new Encoder(n)
     u.reset(this.strmap)
     u.single = false
@@ -187,58 +344,28 @@ class ARTable {
       }
     }
     u.push_type(_encode(v, u, prev, null, index, null, true, op))
-    return { query: u.dump(), strmap: u.strMap }
+    return { delta: u.dump(), strmap: u.strMap }
   }
 
-  encode(obj, q) {
+  encode(q) {
     const d3 = new Decoder()
-    const left2 = d3.decode(q, obj.krefs.length, null, this.strmap)
-    const d4 = new ARTable(obj)
-    let artable = []
-    for (const v of [
-      "vrefs",
-      "krefs",
-      "ktypes",
-      "keys",
-      "types",
-      "bools",
-      "nums",
-      "strs",
-    ]) {
-      d4[v] = d4[v].concat(d3[v])
-      artable[v] = d4[v]
-      this[v] = d4[v]
-    }
-    d4.strmap = mergeLeft(d3.strmap, d4.strmap)
-    artable.strmap = d4.strmap
-    this.strmap = d4.strmap
-    const builder = new Builder(this.table())
-    const json = builder.build()
-    artable = builder.table()
-    return { left: frombits(left2), json, artable }
-  }
-  build() {
-    const builder = new Builder(this.table())
-    return builder.build()
+    const left = d3.decode(q, this.krefs.length, this.strmap)
+    const table = d3.table()
+    this.compact(this.table(), table)
+    const json = this.build()
+    this.buildMap()
+    return { left: frombits(left), json }
   }
 
-  update(q, artable, len, n) {
-    artable ??= this.table()
-    if (!q) return null
-    let res = null
-    let _json = null
-    let i = 0
-    let left = null
-    do {
-      res = this.encode(artable, q)
-      _json = res.json
-      q = res.left
-      left = res.left
-      artable = res.artable
-      i++
-    } while (q.length > 0 && typeof len === "number" && i < len)
+  build() {
+    return new Builder(this.table()).build()
+  }
+
+  update(left) {
+    let json = null
+    while (left.length > 0) ({ left, json } = this.encode(left))
     this.buildMap()
-    return { json: _json, left, artable }
+    return { json, left }
   }
 }
 
