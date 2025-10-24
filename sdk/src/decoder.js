@@ -33,7 +33,7 @@ class Decoder {
     return result
   }
 
-  decode(v, count = null, query, strmap) {
+  decode(v, count = null, strmap) {
     this.initial_count = 0
     if (count !== null) {
       this.initial_count = count
@@ -67,18 +67,11 @@ class Decoder {
     this.krefs = []
     this.vrefs = []
     this.ktypes = []
-    this.types = []
+    this.vtypes = []
     this.nums = []
     this.keys = []
     this.strs = []
     this.json = {}
-    if (query) {
-      this.op = this.n(2)
-      this.col = this.short()
-      this.doc = this.leb128()
-      if (this.op === 2) this.update_len = this.short()
-      if (this.op !== 1) return tobits(this.o, this.c)
-    }
     this.single = this.n(1) === 1
     if (this.single) this.getSingle()
     else {
@@ -89,7 +82,7 @@ class Decoder {
       this.getKrefs()
       this.getKtypes()
       this.getKeys()
-      this.getTypes()
+      this.getVtypes()
       this.getBools()
       this.getNums()
       this.getStrs()
@@ -133,13 +126,13 @@ class Decoder {
     let str = 0
     for (const v of flatten(_arr)) {
       if (v.t === "k") toMap(this.keys[v.i + plus2])
-      else if (includes(this.types[v.i], [2, 7])) toMap(this.strs[str++])
+      else if (includes(this.vtypes[v.i], [2, 7])) toMap(this.strs[str++])
     }
   }
 
   getStrs() {
     let val = null
-    for (let _type of this.types) {
+    for (let _type of this.vtypes) {
       let type = Array.isArray(_type) ? _type[1] : _type
       if (Array.isArray(type)) type = type[1]
       if (type === 7 || type === 2) {
@@ -204,7 +197,7 @@ class Decoder {
       krefs: this.krefs,
       ktypes: this.ktypes,
       keys: this.keys,
-      types: this.types,
+      vtypes: this.vtypes,
       bools: this.bools,
       nums: this.nums,
       strs: this.strs,
@@ -343,7 +336,7 @@ class Decoder {
     }
   }
 
-  getTypes() {
+  getVtypes() {
     let i2 = -1
     let len = Math.max(1, this.vrefs.length)
     for (let i = 0; i < len; i++) {
@@ -353,17 +346,17 @@ class Decoder {
         if (count === 0) {
           let type2 = this.n(1)
           if (type2 === 1)
-            this.types.push(0) // this is delete
+            this.vtypes.push(0) // this is delete
           else {
             // here for custom types
           }
         } else {
           i += count - 1
           let type2 = this.n(3)
-          for (let i2 = 0; i2 < count; i2++) this.types.push(type2)
+          for (let i2 = 0; i2 < count; i2++) this.vtypes.push(type2)
         }
       } else {
-        this.types.push(type)
+        this.vtypes.push(type)
       }
     }
   }
@@ -418,7 +411,7 @@ class Decoder {
   }
 
   getBools() {
-    for (let _v of this.types) {
+    for (let _v of this.vtypes) {
       let v = Array.isArray(_v) ? _v[1] : _v
       if (v === 3) this.bools.push(this.n(1) === 1)
     }
@@ -426,7 +419,7 @@ class Decoder {
 
   getNums() {
     let prev = 0
-    for (let _v of this.types) {
+    for (let _v of this.vtypes) {
       let v = Array.isArray(_v) ? _v[1] : _v
       if (v >= 4 && v <= 6) {
         let num = this.dint(prev)
@@ -484,35 +477,13 @@ class Decoder {
     }
   }
 
-  bits() {
-    console.log(this.c, tobits(this.o, this.c))
-  }
-
-  movePads() {
-    if (this.c % 8 > 0) this.c += 8 - (this.c % 8)
-  }
-
   build() {
     const builder = new Builder(this.table())
     this.json = builder.build()
     const artable = builder.table()
     for (let k in artable) this[k] = artable[k]
+    if (this.c % 8 !== 0) this.c += 8 - (this.c % 8)
     return this.json
   }
 }
-
-function decode(v, d, query, strmap) {
-  const left = d.decode(v, undefined, query, strmap)
-  return query
-    ? {
-        op: d.op,
-        col: d.col,
-        doc: d.doc,
-        json: d.json,
-        left,
-        len: d.update_len,
-      }
-    : d.json
-}
-
-export { Decoder, decode }
+export { Decoder }

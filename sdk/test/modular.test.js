@@ -1,10 +1,53 @@
 import { describe, it } from "node:test"
 import { enc, dec, ARJSON } from "../src/arjson.js"
-import { ARTable, Decoder, decode, Encoder, encode } from "../src/index.js"
+import { ARTable, Decoder, Encoder } from "../src/index.js"
 import assert from "assert"
 import { genUser } from "./utils.js"
 
 describe("ARJSON", function () {
+  it.only("should remove id field", () => {
+    const users = [
+      { tags: ["developer"] },
+      { name: "Frank Jones" },
+      { tags: ["admin"] },
+      { name: "Charlie Miller" },
+    ]
+
+    const arj = new ARJSON({ json: users[0] })
+    arj.update(users[1])
+    assert.deepEqual(arj.json, users[1])
+    arj.update(users[2])
+    assert.deepEqual(arj.json, users[2])
+    arj.update(users[3])
+    assert.deepEqual(arj.json, users[3])
+  })
+  it("should compact vtable", () => {
+    const obj1 = { a: [1, 2, 3] }
+    const arj = new ARJSON({ json: obj1 })
+    let obj2 = null
+    obj2 = { b: 4 }
+    arj.update(obj2)
+    obj2 = { c: 5 }
+    arj.update(obj2)
+    assert.deepEqual(obj2, arj.json)
+  })
+
+  it("should compact vtable", () => {
+    let count = 0
+    const obj1 = { a: count }
+    const arj = new ARJSON({ json: obj1 })
+    let obj2 = null
+    while (count < 10) {
+      obj2 = { a: ++count }
+      arj.update(obj2)
+    }
+    obj2 = { b: ++count }
+    arj.update(obj2)
+    obj2 = { b: ++count }
+    arj.update(obj2)
+    assert.deepEqual(obj2, arj.json)
+  })
+
   it("should delta upgrade in edge cases", () => {
     const obj1 = null
     const obj2 = ["a"]
@@ -31,6 +74,30 @@ describe("ARJSON", function () {
       }
     }
   })
+  it("should delta upgrade #3", () => {
+    const user = genUser()
+    const arj = new ARJSON({ json: user })
+    let i = 0
+    let user2 = null
+    let users = [user]
+    while (true) {
+      user2 = genUser()
+      users.push(user2)
+      try {
+        arj.update(user2)
+        console.log(arj.artable.table())
+        assert.deepEqual(arj.json, user2)
+      } catch (e) {
+        console.log(e)
+        console.log(users)
+        process.exit()
+      }
+      i++
+      if (i > 100) break
+    }
+    assert.deepEqual(arj.json, user2)
+  })
+
   it("should delta upgrade #2", () => {
     const json = { abc: 123 }
     const arj = new ARJSON({ json })
@@ -44,29 +111,6 @@ describe("ARJSON", function () {
     assert.deepEqual(arj2.json, arj3.json)
     arj3.update({ abc: 123, ghi: 789, xyz: 999 })
     assert.deepEqual(arj3.json, { abc: 123, ghi: 789, xyz: 999 })
-  })
-  it("should delta upgrade #3", () => {
-    const user = genUser()
-    const arj = new ARJSON({ json: user })
-    let i = 0
-    let size0 = JSON.stringify(user).length
-    let user2 = null
-    while (true) {
-      user2 = genUser()
-      size0 += JSON.stringify(user2).length
-      try {
-        arj.update(user2)
-        assert.deepEqual(arj.json, user2)
-      } catch (e) {
-        console.log(e)
-        process.exit()
-      }
-      i++
-      if (i > 100) break
-    }
-    let size = 0
-    for (let v of arj.deltas) size += v.length
-    assert.deepEqual(arj.json, user2)
   })
 
   it("check", () => {
