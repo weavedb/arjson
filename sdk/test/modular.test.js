@@ -6,13 +6,17 @@ import { genUser } from "./utils.js"
 
 describe("ARJSON", function () {
   it.only("should remove id field", () => {
+    console.log(dec(enc({ a: [] })))
+    return
+  })
+  it.only("should remove id field", () => {
     const users = [
       {
-        tags: ["engineer", "admin"],
+        tags: [4],
       },
       {
         skills: ["admin", "manager", "manager"],
-        projects: [{ name: "yctPZIRrB19Qv3j9 pDp" }],
+        projects: [3],
       },
     ]
 
