@@ -345,10 +345,10 @@ class Decoder {
         const count = this.short()
         if (count === 0) {
           let type2 = this.n(1)
-          if (type2 === 1)
-            this.vtypes.push(0) // this is delete
+          if (type2 === 1) this.vtypes.push(0)
           else {
-            // here for custom types
+            // here for custom types - empty array case
+            this.vtypes.push(6)
           }
         } else {
           i += count - 1

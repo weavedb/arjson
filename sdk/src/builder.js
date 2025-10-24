@@ -66,6 +66,7 @@ class Builder {
   }
 
   build() {
+    console.log(this.table())
     this.arrs = {}
     this.objs = {}
     this.nc = 0
