@@ -18,7 +18,6 @@ const diff = (a, b, path = "", depth = 0) => {
   }
   if (Array.isArray(a) && Array.isArray(b)) {
     return [{ path, op: "replace", from: a, to: b }]
-
     /* ORIGINAL CODE - commented out
     if (a.length !== b.length) return [{ path, op: "replace", from: a, to: b }]
     const max = Math.max(a.length, b.length)

@@ -7,19 +7,18 @@ import { genUser } from "./utils.js"
 describe("ARJSON", function () {
   it.only("should remove id field", () => {
     const users = [
-      { tags: ["developer"] },
-      { name: "Frank Jones" },
-      { tags: ["admin"] },
-      { name: "Charlie Miller" },
+      {
+        tags: ["engineer", "admin"],
+      },
+      {
+        skills: ["admin", "manager", "manager"],
+        projects: [{ name: "yctPZIRrB19Qv3j9 pDp" }],
+      },
     ]
 
     const arj = new ARJSON({ json: users[0] })
     arj.update(users[1])
     assert.deepEqual(arj.json, users[1])
-    arj.update(users[2])
-    assert.deepEqual(arj.json, users[2])
-    arj.update(users[3])
-    assert.deepEqual(arj.json, users[3])
   })
   it("should compact vtable", () => {
     const obj1 = { a: [1, 2, 3] }
@@ -66,7 +65,7 @@ describe("ARJSON", function () {
         arj.update(user2)
         assert.deepEqual(arj.json, user2)
         i++
-        if (i > 100) break
+        if (i > 1000) break
       } catch (e) {
         console.log("[user]", user, "[user2]", user2)
         console.log(e)
@@ -85,7 +84,6 @@ describe("ARJSON", function () {
       users.push(user2)
       try {
         arj.update(user2)
-        console.log(arj.artable.table())
         assert.deepEqual(arj.json, user2)
       } catch (e) {
         console.log(e)
@@ -93,7 +91,7 @@ describe("ARJSON", function () {
         process.exit()
       }
       i++
-      if (i > 100) break
+      if (i > 1000) break
     }
     assert.deepEqual(arj.json, user2)
   })
