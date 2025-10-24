@@ -2,7 +2,7 @@ import { parsePath, bits, frombits } from "./utils.js"
 import { Encoder, _encode, pushPathStr } from "./encoder.js"
 import { Decoder } from "./decoder.js"
 import { Builder, getVal } from "./builder.js"
-import { mergeLeft, includes } from "ramda"
+import { mergeLeft, includes, sortBy } from "ramda"
 
 class ARTable {
   table() {
@@ -346,6 +346,31 @@ class ARTable {
     u.push_type(_encode(v, u, prev, null, index, null, true, op))
     return { delta: u.dump(), strmap: u.strMap }
   }
+  compactStrMap() {
+    let strs = {}
+    for (let v of this.keys) if (Array.isArray(v)) strs[v[0]] = true
+    for (let v of this.strs) if (Array.isArray(v)) strs[v[0]] = true
+    let strs_arr = []
+    for (let k in this.strmap) {
+      if (strs[k] !== true) {
+        delete this.strmap[k]
+      } else {
+        strs_arr.push({ from: +k, v: this.strmap[k] })
+      }
+    }
+    strs_arr = sortBy(v => v.from, strs_arr)
+    let i = 0
+    let smap = {}
+    let imap = {}
+    for (let v of strs_arr) {
+      v.to = i++
+      smap[v.to] = v.v
+      imap[v.from] = v.to
+    }
+    this.strmap = smap
+    for (let v of this.keys) if (Array.isArray(v)) v[0] = imap[v[0]]
+    for (let v of this.strs) if (Array.isArray(v)) v[0] = imap[v[0]]
+  }
 
   encode(q) {
     const d3 = new Decoder()
@@ -364,6 +389,7 @@ class ARTable {
   update(left) {
     let json = null
     while (left.length > 0) ({ left, json } = this.encode(left))
+    this.compactStrMap()
     this.buildMap()
     return { json, left }
   }
