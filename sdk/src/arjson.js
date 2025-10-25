@@ -5,12 +5,14 @@ import { ARTable } from "./artable.js"
 import { mergeLeft, uniq, keys, is, equals, concat } from "ramda"
 
 export const enc = json => encode(json, new Encoder())
-export const dec = arj => new Decoder().decode(arj)
+export const dec = arj => {
+  const d = new Decoder()
+  d.decode(arj)
+  return d.json
+}
 
-// Helpers
 const bytes = v => Buffer.byteLength(JSON.stringify(v), "utf8")
 
-// LCS length table for equality via Ramda.equals
 function lcsTable(A, B, eq) {
   const n = A.length,
     m = B.length
@@ -25,7 +27,6 @@ function lcsTable(A, B, eq) {
   return dp
 }
 
-// Recover a minimal edit script consisting of 'keep' | 'del' | 'ins'
 function lcsEditScript(A, B, eq) {
   const dp = lcsTable(A, B, eq)
   let i = A.length,
@@ -52,9 +53,7 @@ function lcsEditScript(A, B, eq) {
 function diffArray(a, b, path = "") {
   const ops = []
 
-  // Handle complete array replacement for different types or when more efficient
   if (a.length === 0 && b.length > 0) {
-    // Empty to non-empty: just add all elements
     for (let i = 0; i < b.length; i++) {
       ops.push({ path: path + `[${i}]`, to: b[i] })
     }
@@ -62,96 +61,75 @@ function diffArray(a, b, path = "") {
   }
 
   if (b.length === 0 && a.length > 0) {
-    // Non-empty to empty: delete all from back to front
     for (let i = a.length - 1; i >= 0; i--) {
       ops.push({ path: path + `[${i}]`, op: "delete", from: a[i] })
     }
     return ops
   }
 
-  // Find the minimal edit sequence
   const commonLength = Math.min(a.length, b.length)
-
-  // Build operation list by comparing indices
-  // First, collect all differences in the overlapping region
   const modifications = []
+
   for (let i = 0; i < commonLength; i++) {
     if (!equals(a[i], b[i])) {
       modifications.push(i)
     }
   }
 
-  // If the arrays are the same length and we have modifications,
-  // just generate delete + insert pairs
-  if (a.length === b.length && modifications.length > 0) {
-    // Delete from back to front
-    for (let i = modifications.length - 1; i >= 0; i--) {
-      const idx = modifications[i]
-      ops.push({ path: path + `[${idx}]`, op: "delete", from: a[idx] })
-    }
-    // Insert from front to back
-    for (let i = 0; i < modifications.length; i++) {
-      const idx = modifications[i]
-      ops.push({ path: path + `[${idx}]`, to: b[idx] })
-    }
-    return ops
-  }
-
-  // Handle length differences
-  if (a.length < b.length) {
-    // Array grew: handle modifications in existing region, then add new elements
-    for (let i = modifications.length - 1; i >= 0; i--) {
-      const idx = modifications[i]
-      ops.push({ path: path + `[${idx}]`, op: "delete", from: a[idx] })
-    }
-    for (let i = 0; i < modifications.length; i++) {
-      const idx = modifications[i]
-      ops.push({ path: path + `[${idx}]`, to: b[idx] })
-    }
-    // Add new elements at the end
-    for (let i = a.length; i < b.length; i++) {
-      ops.push({ path: path + `[${i}]`, to: b[i] })
-    }
-  } else {
-    // Array shrank: delete extras first, then handle modifications
-    // Delete from back to front
+  if (a.length > b.length) {
     for (let i = a.length - 1; i >= b.length; i--) {
       ops.push({ path: path + `[${i}]`, op: "delete", from: a[i] })
     }
-    // Then handle modifications in remaining region
-    for (let i = modifications.length - 1; i >= 0; i--) {
-      const idx = modifications[i]
+  }
+
+  for (let i = modifications.length - 1; i >= 0; i--) {
+    const idx = modifications[i]
+    const isPrimitive = !is(Object, b[idx]) || b[idx] === null
+
+    if (isPrimitive) {
+      ops.push({
+        path: path + `[${idx}]`,
+        op: "replace",
+        from: a[idx],
+        to: b[idx],
+      })
+    } else {
       ops.push({ path: path + `[${idx}]`, op: "delete", from: a[idx] })
     }
-    for (let i = 0; i < modifications.length; i++) {
-      const idx = modifications[i]
+  }
+
+  for (let i = 0; i < modifications.length; i++) {
+    const idx = modifications[i]
+    const isPrimitive = !is(Object, b[idx]) || b[idx] === null
+    if (!isPrimitive) {
       ops.push({ path: path + `[${idx}]`, to: b[idx] })
+    }
+  }
+
+  if (a.length < b.length) {
+    for (let i = a.length; i < b.length; i++) {
+      ops.push({ path: path + `[${i}]`, to: b[i] })
     }
   }
 
   return ops
 }
-
 const diff = (a, b, path = "", depth = 0) => {
   let q = []
   if (equals(a, b)) return q
 
-  // Primitives / non-objects → replace
   if (!is(Object, a) || !is(Object, b)) {
     return [{ path, op: "replace", from: a, to: b }]
   }
 
-  // Arrays → LCS-based diffing
   if (Array.isArray(a) && Array.isArray(b)) {
     return diffArray(a, b, path)
   }
 
   if (Array.isArray(a) || Array.isArray(b)) {
-    // Array vs non-array → replace
     return [{ path, op: "replace", from: a, to: b }]
   }
 
-  // Objects → recurse on keys (unchanged)
   const keys_a = keys(a)
   const keys_b = keys(b)
   const _keys = uniq([...keys_a, ...keys_b])
@@ -200,10 +178,7 @@ export class ARJSON {
   update(json) {
     let deltas = []
     const diffs = diff(this.json, json)
-    console.log("diffs", diffs)
     for (const v of diffs) {
-      console.log()
-      console.log("[new op]", v, "====================================")
       if (
         v.path === "" &&
         (!is(Object, v.from) ||
@@ -236,9 +211,7 @@ export class ARJSON {
     let offset = 0
     const deltas = []
 
-    // Read LEB128 length-prefixed deltas
     while (offset < buf.length) {
-      // Decode LEB128 length
       let len = 0
       let shift = 0
       let byte
@@ -248,7 +221,6 @@ export class ARJSON {
         shift += 7
       } while (byte & 0x80)
 
-      // Extract delta
       const delta = buf.slice(offset, offset + len)
       deltas.push(delta)
       offset += len
@@ -258,30 +230,26 @@ export class ARJSON {
   }
   toBuffer() {
     if (this.buflen !== this.deltas.length) {
-      const parts = []
-
-      // Add LEB128 length prefix for EVERY delta (including initial at index 0)
+      let totalSize = 0
+      const lenBytesArray = []
       for (const delta of this.deltas) {
-        let len = delta.length
         const lenBytes = []
+        let len = delta.length
         while (len >= 128) {
           lenBytes.push((len & 0x7f) | 0x80)
           len = Math.floor(len / 128)
         }
         lenBytes.push(len)
-
-        parts.push(new Uint8Array(lenBytes))
-        parts.push(delta)
+        lenBytesArray.push(lenBytes)
+        totalSize += lenBytes.length + delta.length
       }
-
-      this.cache = Buffer.concat(parts.map(arr => Buffer.from(arr)))
-      this.buflen = this.deltas.length
-    }
-    return this.cache
-  }
-  buffer2() {
-    if (this.buflen !== this.deltas.length) {
-      this.cache = Buffer.concat(this.deltas.map(arr => Buffer.from(arr)))
+      this.cache = Buffer.allocUnsafe(totalSize)
+      let offset = 0
+      for (let i = 0; i < this.deltas.length; i++) {
+        for (const byte of lenBytesArray[i]) this.cache[offset++] = byte
+        this.cache.set(this.deltas[i], offset)
+        offset += this.deltas[i].length
+      }
       this.buflen = this.deltas.length
     }
     return this.cache

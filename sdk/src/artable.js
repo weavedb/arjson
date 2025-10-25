@@ -86,11 +86,11 @@ class ARTable {
         if (vtype[0] === 3) {
           stats[i] = { vtype: "delete" }
         } else if (vtype[0] === 2) {
-          if (includes(vtype[2], [4, 5, 6]))
+          if (includes(vtype[3], [4, 5, 6]))
             stats[i] = { vtype: "nums", i: nc, val: t1.nums[nc++] }
-          else if (includes(vtype[2], [2, 7]))
+          else if (includes(vtype[3], [2, 7]))
             stats[i] = { vtype: "strs", i: sc, val: t1.strs[sc++] }
-          else if (vtype[2] === 3)
+          else if (vtype[3] === 3)
             stats[i] = { vtype: "bools", i: bc, val: t1.bools[bc++] }
         }
       }
@@ -156,11 +156,9 @@ class ARTable {
     }
     for (const v of t.vrefs) getP(t, v)
 
-    // Build mapping of old indices to new indices
     const indexMap = {}
     let newIndex = 0
 
-    // Root always stays at 0
     if (t.ktypes.length > 0) {
       indexMap[-1] = -1
       newIndex = 0
@@ -194,7 +192,6 @@ class ARTable {
       i++
     }
 
-    // Remap vrefs
     const vrefs = t.vrefs.map(v => {
       const oldIndex = v - 2
       return typeof indexMap[oldIndex] !== "undefined"
@@ -354,7 +351,38 @@ class ARTable {
         pushPathStr(u, last, i)
       }
     }
-    u.push_type(_encode(v, u, prev, null, index, null, true, op))
+    const push = op === "delete" ? 1 : op === "replace" ? 1 : 0
+    u.push_type(_encode(v, u, prev, null, index, push, true, op))
+    return { delta: u.dump(), strmap: u.strMap }
+  }
+  delta2(path, v, op = null, n) {
+    const u = new Encoder(n)
+    u.reset(this.strmap)
+    u.single = false
+    u.dcount = this.krefs.length + 1
+    u.prev_bits = bits(u.dcount + 1)
+    u.prev_kbits = bits(u.dcount + 1)
+    const paths = parsePath(path)
+    let last = paths[paths.length - 1]
+    let index = null
+    let prev = null
+    if (typeof last === "undefined") prev = -1
+    else if (typeof last === "number") {
+      prev = this.getIndex(paths)
+      if (prev === null) return null
+      index = last
+    } else {
+      prev = this.getIndex(paths, 0)
+      if (prev !== null) prev -= 1
+      else {
+        const i = this.getIndex(paths)
+        if (i === null) return null
+        prev = u.dcount
+        pushPathStr(u, last, i)
+      }
+    }
+    const push = op === "delete" ? 1 : 0
+    u.push_type(_encode(v, u, prev, null, index, push, true, op))
     return { delta: u.dump(), strmap: u.strMap }
   }
   compactStrMap() {
@@ -385,9 +413,7 @@ class ARTable {
 
   encode(q) {
     const d3 = new Decoder()
-    console.log("here....", this.table(), q)
     const left = d3.decode(q, this.krefs.length, this.strmap)
-    console.log(left)
     const table = d3.table()
     this.compact(this.table(), table)
     const json = this.build()
