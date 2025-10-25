@@ -404,15 +404,7 @@ class Encoder {
     let index = null
     let push = null
     if (obj !== null) [v, index, push] = obj
-    if (push !== null) {
-      // breaking
-      this.add_types(0, 3)
-      this.short_types(0)
-      this.add_types(2, 3)
-      this.short_types(push)
-      this.add_types(v, 3)
-    } else if (index !== null) {
-      // breaking
+    if (index !== null) {
       this.add_types(0, 3)
       this.short_types(0)
       this.add_types(1, 3)
@@ -1013,11 +1005,7 @@ function _encode(
     )
       u.push_type(prev_type)
     else u.tcount++
-    u.push_type([0, index, push])
-    u.tcount = 0
-    u.short_types(0)
-    u.add_types(1, 1)
-    return null
+    return [0, index, push]
   } else if (typeof v === "number") {
     if (prev !== null) u.push_vlink(prev + 1)
     const moved = v % 1 === v ? 0 : getPrecision(v)
@@ -1054,21 +1042,6 @@ function _encode(
       u.push_type(prev_type)
     else u.tcount++
     return [1, index, push]
-    if (update) {
-      if (op?.op === "merge") {
-        u.add_types(0, 2)
-        u.short_types(0)
-      } else if (op?.op === "splice") {
-        u.add_types(3, 2)
-        u.short_types(index)
-        u.short_types(op.remove ?? 0)
-      } else if (typeof index === "number") {
-        u.add_types(2, 2)
-        u.short_types(index)
-      } else u.add_types(1, 2)
-
-      return null
-    } else return [1, index, push]
   } else if (typeof v === "string") {
     let ktype = 7
     if (prev !== null) u.push_vlink(prev + 1)
@@ -1105,22 +1078,9 @@ function _encode(
 
     return [ktype, index, push]
   } else if (Array.isArray(v)) {
-    // if index... put empty [], then link to it
-    if (index !== null) {
-      if (prev !== null) u.push_vlink(prev + 1)
-      u.push_float(false, 1)
-      u.push_klink(prev + 1)
-      u.add_keys(0, 2)
-      prev_type = [6, index, push]
-      const _prev = u.dcount
-      u.dcount++
-      let i = 0
-      for (const v2 of v) {
-        prev_type = _encode(v2, u, _prev, prev_type, null, index)
-        i++
-      }
-      return prev_type
-    } else if (v.length === 0) {
+    // REMOVED: Special case for index !== null
+    // Always encode arrays normally
+    if (v.length === 0) {
       pushPathNum(u, prev, 0, index)
       prev = u.dcount
       if (prev !== null) u.push_vlink(prev)
