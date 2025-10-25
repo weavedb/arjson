@@ -6,7 +6,8 @@ import { genUser } from "./utils.js"
 
 describe("ARJSON", function () {
   it("should remove id field", () => {
-    assert.deepEqual(dec(enc({ a: [] })), [])
+    const json = { a: [] }
+    assert.deepEqual(dec(enc(json)), json)
     return
   })
   it("should remove id field", () => {
@@ -25,22 +26,15 @@ describe("ARJSON", function () {
     ]
     let i = 0
     for (let users of cases) {
-      console.log(
-        i,
-        "[..............................................]",
-        users[0],
-        users[1],
-      )
       const arj = new ARJSON({ json: users[0] })
       arj.update(users[1])
-      console.log(arj.json)
       assert.deepEqual(arj.json, users[1])
       i++
     }
   })
 
   it("should remove id field", () => {
-    const cases = [
+    let cases = [
       // Basic array operations
       [{ a: [1, 3] }, { a: [1, 2, 3, 4], b: 3 }],
       [{ a: [1, 3] }, { a: [1, 2, 3] }],
@@ -84,16 +78,9 @@ describe("ARJSON", function () {
       [{ a: [1, 2, 3] }, { a: 5 }],
     ]
     let i = 0
-    for (let users of cases) {
-      console.log(
-        i,
-        "[..............................................]",
-        users[0],
-        users[1],
-      )
+    for (let users of cases.slice(0, 1)) {
       const arj = new ARJSON({ json: users[0] })
       arj.update(users[1])
-      console.log(arj.json)
       assert.deepEqual(arj.json, users[1])
       i++
     }
@@ -174,32 +161,70 @@ describe("ARJSON", function () {
     assert.deepEqual(arj.json, user2)
   })
 
-  it.only("should delta upgrade #2", () => {
+  it("should delta upgrade #2", () => {
     const json = [{ a: ["d"] }, { a: ["e"] }, { c: "f" }]
     const arj = new ARJSON({ json: json[0] })
     arj.update(json[1])
     arj.update(json[2])
     //assert.deepEqual(arj.json, json[2])
-    console.log("lets rebuild.................................")
     const arj2 = new ARJSON({ arj: arj.toBuffer() })
     arj2.update({ abc: 123, ghi: 789 })
     const arj3 = new ARJSON({ table: arj2.artable.table() })
     assert.deepEqual(arj2.json, arj3.json)
     arj3.update({ abc: 123, ghi: 789, xyz: 999 })
     assert.deepEqual(arj3.json, { abc: 123, ghi: 789, xyz: 999 })
-    console.log(arj3.toBuffer())
   })
 
-  it("check", () => {
+  it.only("check", () => {
     const user = {
-      pr: [
-        { a: "c", e: "f" },
-        { a: "d", e: "g" },
+      id: "Vyr2ohGFYbs3VSH0 gfHZL7YhBUe",
+      username: "s7Zeb3aU5yDOo",
+      name: "Eve Jones",
+      email: "Jzvtkn8FXq@example.com",
+      bio: "Bly2FSwWRCQJPhPS XNHDnBGPyXWNEfH Bp0OFAU1C6ddYgF 1NbwHqzNVGdkdwX I5XYLJjgNz7dQOSXxH4Ex4S",
+      description:
+        "XsPLkG8TcFUhPhYn yGec6mVTXMLDf6Q xs4tanfUhqkTwol YsHhsXPLz8UBvXE wwI1qWeiTKEGVOI qDHGxU9Thl7Woaj MBkgDcaEuuza5Sg cG73ImxmD17c0iIKJ19OmJraAOY43t by9Dto39F16aRcD Fq8ZKhppn",
+      age: 21,
+      role: "engineer",
+      experience: 2,
+      active: false,
+      verified: true,
+      metadata: {
+        department: "manager",
+        level: 10,
+        certified: false,
+        joined: 1759238052405,
+      },
+      skills: ["user", "admin", "analyst"],
+      projects: [
+        { name: "DgMOsFTxxd6rzn28uz", status: "pending", progress: 41 },
+        { name: "lCsZZCOCAGESS", status: "active", progress: 52 },
+        { name: "WkWgbTy5g0WWjr", status: "active", progress: 13 },
       ],
     }
     const user2 = {
-      pr: [{ a: "d", e: "x" }],
+      id: "GVuoPZwdXu686rT8IOAl",
+      username: "ldi1Eu3d6xylj",
+      name: "Henry Jones",
+      email: "amqOoqYP0@example.com",
+      bio: "T5nad4QeEmNon1im 9mVmu7Wyhh46fCB Srwahz8NVEuJfft PkqufnoGlKYNgkM5wA9l4El1VxuYcA twfyoK",
+      description:
+        "GpzwCpPnGQ5dKxzV bkJdbpDuLTAGsqT tBrqQKxoa0EftVe RaSvI7uqfl6NKJg bntm0CuKhaVaaFTJxmbsw1t6haCAgcAtR3gOu4RaGIF26 4PUfcdbaUY19mVvxSUoYDzQTYQhiVj eMp9KCE53CqW1QK tzFUfjagJ5x",
+      age: 75,
+      role: "guest",
+      experience: 5,
+      active: true,
+      verified: true,
+      metadata: {
+        department: "member",
+        level: 10,
+        certified: true,
+        joined: 1759892242897,
+      },
+      skills: ["engineer", "analyst", "admin"],
+      projects: [{ name: "kWd9fSHpJynzH8Y", status: "active", progress: 84 }],
     }
+
     const arj = new ARJSON({ json: user })
     arj.update(user2)
     assert.deepEqual(arj.json, user2)

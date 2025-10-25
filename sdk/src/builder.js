@@ -56,20 +56,13 @@ class Builder {
       if (typeof val.__push__ !== "undefined") {
         json[val.__push__].push(val.__val__)
       } else if (typeof val.__index__ !== "undefined") {
-        if (typeof val.__remove__ !== "undefined") {
-          if (val.__del__) json.splice(val.__index__, val.__remove__)
-          else json.splice(val.__index__, val.__remove__, ...val.__val__)
-        } else if (val.__del__) json.splice(val.__index__, 1)
-        else {
-          json.splice(val.__index__, 0, val.__val__)
-          //json.splice(val.__index__, 1, val.__val__)
-        }
+        if (val.__del__) json.splice(val.__index__, val.__remove__)
+        else json.splice(val.__index__, val.__remove__, val.__val__)
       } else json.push(val.__val__)
     }
   }
 
   build() {
-    console.log(this.table())
     this.arrs = {}
     this.objs = {}
     this.nc = 0
@@ -348,7 +341,6 @@ class Builder {
       }
       _json ??= json
     }
-    console.log("final value...............", _json)
     return _json
   }
 }
@@ -412,10 +404,11 @@ const getVal = (i, obj) => {
     val = { __update__: true }
     if (type[0] === 2) {
       val.__index__ = type[1]
-      val.__val__ = get(obj, type[2])
+      val.__remove__ = type[2]
+      val.__val__ = get(obj, type[3])
     } else if (type[0] === 3) {
       val.__index__ = type[1]
-      val.__remove__ = 1
+      val.__remove__ = type[2]
       val.__del__ = true
     } else if (type[0] === 0) {
       if (type[1] === 0) {

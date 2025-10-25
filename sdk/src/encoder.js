@@ -407,8 +407,9 @@ class Encoder {
     if (index !== null) {
       this.add_types(0, 3)
       this.short_types(0)
-      this.add_types(1, 3)
+      this.add_types(1, 1)
       this.short_types(index)
+      this.short_types(push ?? 0)
       this.add_types(v, 3)
     } else if (this.tcount > 3) {
       this.add_types(0, 3)
@@ -1078,13 +1079,16 @@ function _encode(
 
     return [ktype, index, push]
   } else if (Array.isArray(v)) {
-    // REMOVED: Special case for index !== null
-    // Always encode arrays normally
     if (v.length === 0) {
       pushPathNum(u, prev, 0, index)
       prev = u.dcount
       if (prev !== null) u.push_vlink(prev)
-      u.push_type(prev_type)
+      if (
+        prev_type !== null &&
+        (prev_type[1] !== null || prev_type[2] !== null || prev_type[0] !== 6)
+      ) {
+        u.push_type(prev_type)
+      } else u.tcount++
       u.push_float(false, 1)
       return [6, index, push]
     } else {
@@ -1102,7 +1106,12 @@ function _encode(
       pushPathNum(u, prev, 1, index)
       prev = u.dcount
       if (prev !== null) u.push_vlink(prev)
-      u.push_type(prev_type)
+      if (
+        prev_type !== null &&
+        (prev_type[1] !== null || prev_type[2] !== null || prev_type[0] !== 6)
+      ) {
+        u.push_type(prev_type)
+      } else u.tcount++
       u.push_float(true, 1)
       return [6, index, push]
     } else {
