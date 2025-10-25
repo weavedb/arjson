@@ -5,24 +5,98 @@ import assert from "assert"
 import { genUser } from "./utils.js"
 
 describe("ARJSON", function () {
-  it.only("should remove id field", () => {
-    console.log(dec(enc({ a: [] })))
+  it("should remove id field", () => {
+    assert.deepEqual(dec(enc({ a: [] })), [])
     return
   })
-  it.only("should remove id field", () => {
-    const users = [
-      {
-        tags: [4],
-      },
-      {
-        skills: ["admin", "manager", "manager"],
-        projects: [3],
-      },
+  it("should remove id field", () => {
+    const cases = [
+      // Nested arrays
+      [{ a: [[1, 2]] }, { a: [[1, 2, 3]] }],
+      [
+        {
+          a: [
+            [1, 2],
+            [3, 4],
+          ],
+        },
+        { a: [[1], [3, 4, 5]] },
+      ],
     ]
+    let i = 0
+    for (let users of cases) {
+      console.log(
+        i,
+        "[..............................................]",
+        users[0],
+        users[1],
+      )
+      const arj = new ARJSON({ json: users[0] })
+      arj.update(users[1])
+      console.log(arj.json)
+      assert.deepEqual(arj.json, users[1])
+      i++
+    }
+  })
 
-    const arj = new ARJSON({ json: users[0] })
-    arj.update(users[1])
-    assert.deepEqual(arj.json, users[1])
+  it("should remove id field", () => {
+    const cases = [
+      // Basic array operations
+      [{ a: [1, 3] }, { a: [1, 2, 3, 4], b: 3 }],
+      [{ a: [1, 3] }, { a: [1, 2, 3] }],
+      [{ a: [1, 3] }, { a: [1, 4] }],
+      [{ a: [1, 2, 3] }, { a: [1, 3] }],
+      [{ a: [1, 2, 3] }, { a: [4, 5, 6] }],
+
+      // Empty arrays
+      [{ a: [] }, { a: [1, 2, 3] }],
+      [{ a: [1, 2, 3] }, { a: [] }],
+      [{ a: [] }, { a: [] }],
+
+      // Array with objects
+      [{ a: [{ x: 1 }] }, { a: [{ x: 2 }] }],
+      [{ a: [{ x: 1 }] }, { a: [{ x: 1 }, { y: 2 }] }],
+
+      // Mixed operations
+      [
+        { a: [1, 2, 3], b: 5 },
+        { a: [1, 4, 3], c: 6 },
+      ],
+      [{ a: [1, 2] }, { a: [2, 3, 4] }],
+
+      // Replace entire array
+      [{ a: [1, 2, 3] }, { a: ["x", "y"] }],
+
+      // Single element changes
+      [{ a: [1] }, { a: [2] }],
+      [{ a: [1] }, { a: [1, 2] }],
+
+      // Multiple arrays
+      [
+        { a: [1, 2], b: [3, 4] },
+        { a: [1], b: [3, 4, 5] },
+      ],
+
+      // Object to array
+      [{ a: 5 }, { a: [1, 2, 3] }],
+
+      // Array to primitive
+      [{ a: [1, 2, 3] }, { a: 5 }],
+    ]
+    let i = 0
+    for (let users of cases) {
+      console.log(
+        i,
+        "[..............................................]",
+        users[0],
+        users[1],
+      )
+      const arj = new ARJSON({ json: users[0] })
+      arj.update(users[1])
+      console.log(arj.json)
+      assert.deepEqual(arj.json, users[1])
+      i++
+    }
   })
   it("should compact vtable", () => {
     const obj1 = { a: [1, 2, 3] }
@@ -100,24 +174,32 @@ describe("ARJSON", function () {
     assert.deepEqual(arj.json, user2)
   })
 
-  it("should delta upgrade #2", () => {
-    const json = { abc: 123 }
-    const arj = new ARJSON({ json })
-    arj.update({ abc: 123, def: 456 })
-    arj.update({ abc: 123, def: 456, ghi: 789 })
-
-    const arj2 = new ARJSON({ arj: arj.buffer() })
+  it.only("should delta upgrade #2", () => {
+    const json = [{ a: ["d"] }, { a: ["e"] }, { c: "f" }]
+    const arj = new ARJSON({ json: json[0] })
+    arj.update(json[1])
+    arj.update(json[2])
+    //assert.deepEqual(arj.json, json[2])
+    console.log("lets rebuild.................................")
+    const arj2 = new ARJSON({ arj: arj.toBuffer() })
     arj2.update({ abc: 123, ghi: 789 })
-
     const arj3 = new ARJSON({ table: arj2.artable.table() })
     assert.deepEqual(arj2.json, arj3.json)
     arj3.update({ abc: 123, ghi: 789, xyz: 999 })
     assert.deepEqual(arj3.json, { abc: 123, ghi: 789, xyz: 999 })
+    console.log(arj3.toBuffer())
   })
 
   it("check", () => {
-    const user = { tags: 3 }
-    const user2 = { skills: ["c"], projects: [{ a: "b" }, { a: "c" }] }
+    const user = {
+      pr: [
+        { a: "c", e: "f" },
+        { a: "d", e: "g" },
+      ],
+    }
+    const user2 = {
+      pr: [{ a: "d", e: "x" }],
+    }
     const arj = new ARJSON({ json: user })
     arj.update(user2)
     assert.deepEqual(arj.json, user2)

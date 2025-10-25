@@ -82,6 +82,17 @@ class ARTable {
         else if (vtype === 0) {
           stats[i] = { vtype: "delete" }
         }
+      } else if (Array.isArray(vtype)) {
+        if (vtype[0] === 3) {
+          stats[i] = { vtype: "delete" }
+        } else if (vtype[0] === 2) {
+          if (includes(vtype[2], [4, 5, 6]))
+            stats[i] = { vtype: "nums", i: nc, val: t1.nums[nc++] }
+          else if (includes(vtype[2], [2, 7]))
+            stats[i] = { vtype: "strs", i: sc, val: t1.strs[sc++] }
+          else if (vtype[2] === 3)
+            stats[i] = { vtype: "bools", i: bc, val: t1.bools[bc++] }
+        }
       }
       i++
     }
@@ -100,7 +111,7 @@ class ARTable {
     i = 0
     for (const v of t2.vrefs) {
       const _imap = imap[v] ?? []
-      for (const i2 of _imap) remove(i2)
+      if (t2.vtypes[i] === 0) for (const i2 of _imap) remove(i2)
       i++
     }
     let i2 = 0
@@ -374,7 +385,9 @@ class ARTable {
 
   encode(q) {
     const d3 = new Decoder()
+    console.log("here....", this.table(), q)
     const left = d3.decode(q, this.krefs.length, this.strmap)
+    console.log(left)
     const table = d3.table()
     this.compact(this.table(), table)
     const json = this.build()

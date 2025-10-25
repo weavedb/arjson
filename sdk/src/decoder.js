@@ -133,8 +133,8 @@ class Decoder {
   getStrs() {
     let val = null
     for (let _type of this.vtypes) {
-      let type = Array.isArray(_type) ? _type[1] : _type
-      if (Array.isArray(type)) type = type[1]
+      let type = Array.isArray(_type) ? _type[2] : _type
+      if (Array.isArray(type)) type = type[2]
       if (type === 7 || type === 2) {
         let len = this.short()
         if (type === 2 && len === 0) this.strs.push([this.short()])
@@ -344,12 +344,42 @@ class Decoder {
       if (type === 0) {
         const count = this.short()
         if (count === 0) {
+          let type2 = this.n(3)
+          if (type2 === 1) {
+            let index = this.short()
+            let type3 = this.n(3)
+            if (type3 === 0) {
+              this.vtypes.push([3, index])
+            } else {
+              this.vtypes.push([2, index, type3])
+            }
+          } else if (type2 === 0) this.vtypes.push(0)
+
+          /*
           let type2 = this.n(1)
-          if (type2 === 1) this.vtypes.push(0)
-          else {
-            // here for custom types - empty array case
+          console.log("type2", type2)
+          if (type2 === 1) {
+            const count2 = this.n(1)
+            console.log("count2...........", count2)
+            if (count2 === 0) this.vtypes.push(0)
+            else {
+              const count3 = this.n(2)
+              console.log("count3", count3)
+              if (count3 === 0) {
+                const index = this.short()
+                console.log("delete", index)
+                this.vtypes.push([3, index])
+              } else if (count3 === 1) {
+                const index = this.short()
+                console.log("insert", index)
+                this.vtypes.push([2, index])
+              }
+            }
+          } else {
+            //const count2 = this.n(1)
+            console.log("why here????????????????")
             this.vtypes.push(6)
-          }
+          }*/
         } else {
           i += count - 1
           let type2 = this.n(3)
@@ -412,7 +442,7 @@ class Decoder {
 
   getBools() {
     for (let _v of this.vtypes) {
-      let v = Array.isArray(_v) ? _v[1] : _v
+      let v = Array.isArray(_v) ? _v[2] : _v
       if (v === 3) this.bools.push(this.n(1) === 1)
     }
   }
@@ -420,7 +450,7 @@ class Decoder {
   getNums() {
     let prev = 0
     for (let _v of this.vtypes) {
-      let v = Array.isArray(_v) ? _v[1] : _v
+      let v = Array.isArray(_v) ? _v[2] : _v
       if (v >= 4 && v <= 6) {
         let num = this.dint(prev)
         prev = num

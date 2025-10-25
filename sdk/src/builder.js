@@ -60,7 +60,10 @@ class Builder {
           if (val.__del__) json.splice(val.__index__, val.__remove__)
           else json.splice(val.__index__, val.__remove__, ...val.__val__)
         } else if (val.__del__) json.splice(val.__index__, 1)
-        else json.splice(val.__index__, 1, val.__val__)
+        else {
+          json.splice(val.__index__, 0, val.__val__)
+          //json.splice(val.__index__, 1, val.__val__)
+        }
       } else json.push(val.__val__)
     }
   }
@@ -345,6 +348,7 @@ class Builder {
       }
       _json ??= json
     }
+    console.log("final value...............", _json)
     return _json
   }
 }
@@ -386,6 +390,19 @@ const getKey = (i, keys, obj) => {
   }
 }
 
+const get = (obj, type) => {
+  let val = null
+  if (type === 7 || type === 2) {
+    let str = obj.strs[obj.sc++]
+    if (Array.isArray(str)) str = obj.strmap[str[0].toString()]
+    val = str
+  } else if (type === 4) val = obj.nums[obj.nc++]
+  else if (type === 5) val = obj.nums[obj.nc++]
+  else if (type === 6) val = obj.nums[obj.nc++]
+  else if (type === 1) val = null
+  else if (type === 3) val = obj.bools[obj.bc++]
+  return val
+}
 const getVal = (i, obj) => {
   let type = obj.vtypes[i]
   let val = null
@@ -395,9 +412,11 @@ const getVal = (i, obj) => {
     val = { __update__: true }
     if (type[0] === 2) {
       val.__index__ = type[1]
+      val.__val__ = get(obj, type[2])
     } else if (type[0] === 3) {
       val.__index__ = type[1]
-      val.__remove__ = type[2]
+      val.__remove__ = 1
+      val.__del__ = true
     } else if (type[0] === 0) {
       if (type[1] === 0) {
         val.__del__ = true
@@ -406,15 +425,7 @@ const getVal = (i, obj) => {
       }
     } else console.log("xxxxxxxxxxxxxxxxxxxxxxxxxxx")
   } else if (type === 0) val = { __del__: true }
-  else if (type === 7 || type === 2) {
-    let str = obj.strs[obj.sc++]
-    if (Array.isArray(str)) str = obj.strmap[str[0].toString()]
-    val = { __val__: str }
-  } else if (type === 4) val = { __val__: obj.nums[obj.nc++] }
-  else if (type === 5) val = { __val__: obj.nums[obj.nc++] }
-  else if (type === 6) val = { __val__: obj.nums[obj.nc++] }
-  else if (type === 1) val = { __val__: null }
-  else if (type === 3) val = { __val__: obj.bools[obj.bc++] }
+  else val = { __val__: get(obj, type) }
   return val
 }
 
