@@ -419,15 +419,7 @@ const obj_merge = (json, k, val, obj) => {
       else json[k][k2] = val.__val__[k2]
     }
   } else if (val.__val__ instanceof Uint8Array) {
-    console.log()
-    console.log(
-      "diffsize",
-      val.__val__.length,
-      "original tx size",
-      json[k].length,
-    )
     json[k] = applyDecodedOps(json[k], decodeFastDiff(val.__val__, obj.strmap))
-    console.log("newsize", json[k].length)
   } else json[k] = val.__val__
 }
 
