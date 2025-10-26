@@ -1,4 +1,5 @@
 import { decodeFastDiff, applyDecodedOps } from "./diff.js"
+
 class Builder {
   table() {
     return {
@@ -102,6 +103,9 @@ class Builder {
             if (i2 === keys.length - 2) {
               const k2 = keys[i2 + 1]
               if (type(k2) === 0) {
+                set(k2)
+                json.push([])
+                json = json[json.length - 1]
                 arr_push(json, val, obj)
                 break
               }
@@ -141,13 +145,25 @@ class Builder {
               arr_push(json, val, obj)
               break
             } else if (keys.length === 2) {
-              if (!ex(k2) || k2[2] === true) {
-                set(k2)
-                json.push([])
+              if (t2 === 0) {
+                if (k2[2] === true) {
+                  set(k2)
+                  json.push([])
+                  json = json[json.length - 1]
+                } else {
+                  json = json[k[1]]
+                }
+                arr_push(json, val, obj)
+                break
+              } else {
+                if (!ex(k2) || k2[2] === true) {
+                  set(k2)
+                  json.push({})
+                }
+                json = json[json.length - 1]
+                arr_push(json, val, obj)
+                break
               }
-              json = json[json.length - 1]
-              arr_push(json, val, obj)
-              break
             }
 
             if (t2 === 0) {

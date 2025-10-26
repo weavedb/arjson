@@ -1,10 +1,9 @@
-import { frombits } from "./utils.js"
 import { Encoder, encode } from "./encoder.js"
 import { Decoder } from "./decoder.js"
 import { ARTable } from "./artable.js"
 import { mergeLeft, uniq, keys, is, equals, concat } from "ramda"
 import fastDiff from "fast-diff"
-import { encodeFastDiff, decodeFastDiff, applyDecodedOps } from "./diff.js"
+import { encodeFastDiff } from "./diff.js"
 
 export const enc = json => encode(json, new Encoder())
 export const dec = arj => {
@@ -166,7 +165,6 @@ export class ARJSON {
   update(json) {
     let deltas = []
     const diffs = diff(this.json, json)
-
     for (const v of diffs) {
       let diff =
         v.op === "diff" ? encodeFastDiff(v.diffs, this.artable.strmap) : null
@@ -188,13 +186,18 @@ export class ARJSON {
         this.artable.strmap = this.artable.strmap
         continue
       }
-      this.load(this.artable.delta(v.path, v.to, v.op, 1, diff).delta)
+      const delta = this.load(
+        this.artable.delta(v.path, v.to, v.op, 1, diff).delta,
+      )
+      deltas.push(delta)
     }
+    return deltas
   }
   load(delta) {
     this.json = this.artable.update(delta).json
     this.deltas.push(delta)
     delete this.cache
+    return delta
   }
   fromBuffer(buffer) {
     const buf = new Uint8Array(buffer)
@@ -218,28 +221,36 @@ export class ARJSON {
 
     return deltas
   }
+  static toBuffer(deltas) {
+    let totalSize = 0
+    const lenBytesArray = []
+
+    for (const delta of deltas) {
+      const lenBytes = []
+      let len = delta.length
+      while (len >= 128) {
+        lenBytes.push((len & 0x7f) | 0x80)
+        len = Math.floor(len / 128)
+      }
+      lenBytes.push(len)
+      lenBytesArray.push(lenBytes)
+      totalSize += lenBytes.length + delta.length
+    }
+
+    const buffer = Buffer.allocUnsafe(totalSize)
+    let offset = 0
+
+    for (let i = 0; i < deltas.length; i++) {
+      for (const byte of lenBytesArray[i]) buffer[offset++] = byte
+      buffer.set(deltas[i], offset)
+      offset += deltas[i].length
+    }
+
+    return buffer
+  }
   toBuffer() {
     if (this.buflen !== this.deltas.length) {
-      let totalSize = 0
-      const lenBytesArray = []
-      for (const delta of this.deltas) {
-        const lenBytes = []
-        let len = delta.length
-        while (len >= 128) {
-          lenBytes.push((len & 0x7f) | 0x80)
-          len = Math.floor(len / 128)
-        }
-        lenBytes.push(len)
-        lenBytesArray.push(lenBytes)
-        totalSize += lenBytes.length + delta.length
-      }
-      this.cache = Buffer.allocUnsafe(totalSize)
-      let offset = 0
-      for (let i = 0; i < this.deltas.length; i++) {
-        for (const byte of lenBytesArray[i]) this.cache[offset++] = byte
-        this.cache.set(this.deltas[i], offset)
-        offset += this.deltas[i].length
-      }
+      this.cache = ARJSON.toBuffer(this.deltas)
       this.buflen = this.deltas.length
     }
     return this.cache

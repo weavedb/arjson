@@ -140,7 +140,7 @@ describe("ARJSON", function () {
     assert.deepEqual(dec(enc(json)), json)
     return
   })
-  it.only("should use strdiffs", () => {
+  it("should use strdiffs", () => {
     const cases = genDiff()
     let i = 0
     const arj = new ARJSON({ json: cases[0] })
@@ -368,5 +368,10 @@ describe("ARJSON", function () {
     const arj = new ARJSON({ json: user })
     arj.update(user2)
     assert.deepEqual(arj.json, user2)
+  })
+  it.only("should remove id field", () => {
+    const json = [["_/_", 1]]
+    assert.deepEqual(dec(enc(json)), json)
+    return
   })
 })
