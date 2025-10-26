@@ -42,6 +42,7 @@ class ARTable {
     this.bools = bools
     this.keys = keys
     this.strdiffs = strdiffs
+    this.compactStrMap()
     this.buildMap()
   }
   compact(t1, t2) {
@@ -392,31 +393,6 @@ class ARTable {
         v[0] = imap[v[0]]
       }
     }
-  }
-  compactStrMap2() {
-    let strs = {}
-    for (let v of this.keys) if (Array.isArray(v)) strs[v[0]] = true
-    for (let v of this.strs) if (Array.isArray(v)) strs[v[0]] = true
-    let strs_arr = []
-    for (let k in this.strmap) {
-      if (strs[k] !== true) {
-        delete this.strmap[k]
-      } else {
-        strs_arr.push({ from: +k, v: this.strmap[k] })
-      }
-    }
-    strs_arr = sortBy(v => v.from, strs_arr)
-    let i = 0
-    let smap = {}
-    let imap = {}
-    for (let v of strs_arr) {
-      v.to = i++
-      smap[v.to] = v.v
-      imap[v.from] = v.to
-    }
-    this.strmap = smap
-    for (let v of this.keys) if (Array.isArray(v)) v[0] = imap[v[0]]
-    for (let v of this.strs) if (Array.isArray(v)) v[0] = imap[v[0]]
   }
 
   encode(q) {
