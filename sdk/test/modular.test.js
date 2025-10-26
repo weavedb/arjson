@@ -370,7 +370,13 @@ describe("ARJSON", function () {
     assert.deepEqual(arj.json, user2)
   })
   it.only("should remove id field", () => {
-    const json = [["_/_", 1]]
+    const json = [
+      ["_/_", 1],
+      ["_/_config", 1],
+      ["_/users", 1],
+      ["_config/info", 1],
+    ]
+
     assert.deepEqual(dec(enc(json)), json)
     return
   })

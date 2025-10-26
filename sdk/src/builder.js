@@ -149,10 +149,8 @@ class Builder {
                 if (k2[2] === true) {
                   set(k2)
                   json.push([])
-                  json = json[json.length - 1]
-                } else {
-                  json = json[k[1]]
                 }
+                json = json[json.length - 1]
                 arr_push(json, val, obj)
                 break
               } else {
