@@ -33,7 +33,7 @@ class Decoder {
     return result
   }
 
-  decode(v, count = null, strmap) {
+  decode(v, count = null, strmap, strdiffs = []) {
     this.initial_count = 0
     if (count !== null) {
       this.initial_count = count
@@ -50,6 +50,7 @@ class Decoder {
     this.c = 0
     this.nc = 0
     this.sc = 0
+    this.dc = strdiffs.length
     this.bc = 0
     this.len = 0
     this.str_len = 0
@@ -71,6 +72,7 @@ class Decoder {
     this.nums = []
     this.keys = []
     this.strs = []
+    this.strdiffs = []
     this.json = {}
     this.single = this.n(1) === 1
     if (this.single) this.getSingle()
@@ -86,6 +88,7 @@ class Decoder {
       this.getBools()
       this.getNums()
       this.getStrs()
+      this.getStrDiffs()
       this.buildStrMap()
       if (!this.nobuild) this.build()
     }
@@ -129,20 +132,44 @@ class Decoder {
       else if (includes(this.vtypes[v.i], [2, 7])) toMap(this.strs[str++])
     }
   }
+  getStrDiffs() {
+    let diffCount = 0
+    for (let _type of this.strs) {
+      if (Array.isArray(_type) && _type[0] === -1) {
+        diffCount++
+      }
+    }
 
+    for (let i = 0; i < diffCount; i++) {
+      const startPos = this.c
+      const totalBits = this.leb128()
+      const varintBits = this.c - startPos
+      const varintBytes = varintBits / 8
+      const dataBytes = Math.ceil(totalBits / 8)
+      const totalBytes = varintBytes + dataBytes
+
+      this.c = startPos
+      const diffData = new Uint8Array(totalBytes)
+
+      for (let j = 0; j < totalBytes; j++) {
+        diffData[j] = this.n(8)
+      }
+
+      this.strdiffs.push(diffData)
+    }
+  }
   getStrs() {
     let val = null
     for (let _type of this.vtypes) {
-      let type = Array.isArray(_type)
-        ? _type[0] === 2
-          ? _type[3]
-          : _type[2]
-        : _type
+      let type = Array.isArray(_type) ? _type[3] : _type
       if (Array.isArray(type)) type = type[2]
       if (type === 7 || type === 2) {
         let len = this.short()
-        if (type === 2 && len === 0) this.strs.push([this.short()])
-        else {
+        if (type === 2 && len === 0) {
+          let stype = this.n(1)
+          if (stype === 0) this.strs.push([this.short()])
+          else this.strs.push([-1, this.dc++])
+        } else {
           val = ""
           for (let i2 = 0; i2 < len; i2++) {
             if (type === 7) val += String.fromCharCode(Number(this.leb128()))
@@ -184,7 +211,8 @@ class Decoder {
         for (let i = 0; i < len; i++) this.json += base64_rev[this.n(6)]
       } else if (code === 63) {
         this.json = ""
-        for (let i = 0; i < this.short(); i++) {
+        const len = this.short()
+        for (let i = 0; i < len; i++) {
           this.json += String.fromCharCode(Number(this.leb128()))
         }
       }
@@ -206,6 +234,7 @@ class Decoder {
       nums: this.nums,
       strs: this.strs,
       strmap: this.strmap,
+      strdiffs: this.strdiffs,
     }
   }
 
@@ -331,12 +360,8 @@ class Decoder {
     if (this.krefs.length === 0 && this.len === 0) return
     for (let i = 0; i < this.krefs.length + plus; i++) {
       const type = this.n(2)
-      if (type < 2) {
-        this.ktypes.push([type])
-      } else {
-        const len = this.short()
-        this.ktypes.push([type, len])
-      }
+      if (type < 2) this.ktypes.push([type])
+      else this.ktypes.push([type, this.short()])
     }
   }
 
@@ -353,20 +378,15 @@ class Decoder {
             let index = this.short()
             let remove = this.short()
             let type3 = this.n(3)
-            if (type3 === 0) {
-              this.vtypes.push([3, index, remove])
-            } else {
-              this.vtypes.push([2, index, remove, type3])
-            }
+            if (type3 === 0) this.vtypes.push([3, index, remove])
+            else this.vtypes.push([2, index, remove, type3])
           } else if (type2 === 0) this.vtypes.push(0)
         } else {
           i += count - 1
           let type2 = this.n(3)
           for (let i2 = 0; i2 < count; i2++) this.vtypes.push(type2)
         }
-      } else {
-        this.vtypes.push(type)
-      }
+      } else this.vtypes.push(type)
     }
   }
 

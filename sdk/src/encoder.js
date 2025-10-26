@@ -1,3 +1,4 @@
+import diff from "fast-diff"
 import { getPrecision, bits, tobits, strmap, base64 } from "./utils.js"
 
 class Encoder {
@@ -26,6 +27,7 @@ class Encoder {
     this.dc = new Uint32Array(32 * n)
     this.kvals = new Uint32Array(64 * n)
     this.vals = new Uint32Array(64 * n)
+    this.strdiffs = new Uint32Array(64 * n)
     this.capacity = n
   }
 
@@ -46,6 +48,7 @@ class Encoder {
     const old_dc = this.dc
     const old_kvals = this.kvals
     const old_vals = this.vals
+    const old_strdiffs = this.strdiffs
 
     this.kc_counts = new Uint32Array(32 * newCapacity)
     this.vc_counts = new Uint32Array(32 * newCapacity)
@@ -62,6 +65,7 @@ class Encoder {
     this.dc = new Uint32Array(32 * newCapacity)
     this.kvals = new Uint32Array(64 * newCapacity)
     this.vals = new Uint32Array(64 * newCapacity)
+    this.strdiffs = new Uint32Array(64 * newCapacity)
 
     this.kc_counts.set(old_kc_counts)
     this.vc_counts.set(old_vc_counts)
@@ -78,6 +82,7 @@ class Encoder {
     this.dc.set(old_dc)
     this.kvals.set(old_kvals)
     this.vals.set(old_vals)
+    this.strdiffs.set(old_strdiffs)
 
     this.capacity = newCapacity
   }
@@ -173,6 +178,18 @@ class Encoder {
     this.vals_len = this._add(this.vals, this.vals_len, val, vlen)
   }
 
+  add_strdiffs(val, vlen) {
+    const maxIdx = (this.strdiffs_len >> 5) + Math.ceil(vlen / 32) + 1
+    if (maxIdx >= this.strdiffs.length) this._grow()
+    this.strdiffs_len = this._add(this.strdiffs, this.strdiffs_len, val, vlen)
+  }
+
+  add_strdiffs_bytes(uint8array) {
+    for (let i = 0; i < uint8array.length; i++) {
+      this.add_strdiffs(uint8array[i], 8)
+    }
+  }
+
   _add(tar, len, val, vlen) {
     if (vlen >= 32) val = val >>> 0
     else val &= (1 << vlen) - 1
@@ -197,6 +214,7 @@ class Encoder {
       else if (tar === this.dc) tar = this.dc
       else if (tar === this.kvals) tar = this.kvals
       else if (tar === this.vals) tar = this.vals
+      else if (tar === this.strdiffs) tar = this.strdiffs
     }
 
     if (vlen <= free) {
@@ -705,6 +723,7 @@ class Encoder {
     this.dc_len = 0
     this.kvals_len = 0
     this.vals_len = 0
+    this.strdiffs_len = 0
   }
   todump() {
     let dumps = []
@@ -814,7 +833,8 @@ class Encoder {
       this.nums_len +
       this.bools_len +
       this.kvals_len +
-      this.vals_len
+      this.vals_len +
+      this.strdiffs_len
     const padBits = (8 - (totalBits % 8)) % 8
     const finalBits = totalBits + padBits
     const outLength = finalBits / 8
@@ -870,12 +890,13 @@ class Encoder {
     writeBuffer(this.bools, this.bools_len)
     writeBuffer(this.nums, this.nums_len)
     writeBuffer(this.vals, this.vals_len)
+    writeBuffer(this.strdiffs, this.strdiffs_len)
     if (padBits > 0) writeBits(0, padBits)
     return out
   }
 }
 
-function pushPathStr(u, v2, prev = null) {
+function pushPathStr(u, v2, prev = null, diff = null) {
   if (u.dcount > 0) u.push_klink(prev === null ? 0 : prev + 1)
   if (u.strMap.has(v2)) {
     u.add_keys(2, 2)
@@ -962,15 +983,11 @@ function encode(v, u, query, strmap) {
         if (is64) {
           u.add_dc(62, 6)
           u.short_dc(v.length)
-          for (let i = 0; i < v.length; i++) {
-            u.add_dc(base64[v[i]], 6)
-          }
+          for (let i = 0; i < v.length; i++) u.add_dc(base64[v[i]], 6)
         } else {
           u.add_dc(63, 6)
           u.short_dc(v.length)
-          for (let i = 0; i < v.length; i++) {
-            u.leb128_2_dc(v.charCodeAt(i))
-          }
+          for (let i = 0; i < v.length; i++) u.leb128_2_dc(v.charCodeAt(i))
         }
       }
     }
@@ -997,6 +1014,7 @@ function _encode(
   update = false,
   op,
   strmap,
+  diff,
 ) {
   if (typeof v === "undefined") {
     if (prev !== null) u.push_vlink(prev + 1)
@@ -1046,9 +1064,15 @@ function _encode(
   } else if (typeof v === "string") {
     let ktype = 7
     if (prev !== null) u.push_vlink(prev + 1)
-    if (u.strMap.has(v)) {
+    if (diff) {
       ktype = 2
       u.short_vals(0)
+      u.add_vals(1, 1)
+      u.add_strdiffs_bytes(diff)
+    } else if (u.strMap.has(v)) {
+      ktype = 2
+      u.short_vals(0)
+      u.add_vals(0, 1)
       u.short_vals(u.strMap.get(v))
     } else {
       u.strMap.set(v, u.str_len++)

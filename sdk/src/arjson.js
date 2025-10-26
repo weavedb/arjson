@@ -3,6 +3,8 @@ import { Encoder, encode } from "./encoder.js"
 import { Decoder } from "./decoder.js"
 import { ARTable } from "./artable.js"
 import { mergeLeft, uniq, keys, is, equals, concat } from "ramda"
+import fastDiff from "fast-diff"
+import { encodeFastDiff, decodeFastDiff, applyDecodedOps } from "./diff.js"
 
 export const enc = json => encode(json, new Encoder())
 export const dec = arj => {
@@ -11,43 +13,15 @@ export const dec = arj => {
   return d.json
 }
 
-const bytes = v => Buffer.byteLength(JSON.stringify(v), "utf8")
-
-function lcsTable(A, B, eq) {
-  const n = A.length,
-    m = B.length
-  const dp = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0))
-  for (let i = 1; i <= n; i++) {
-    for (let j = 1; j <= m; j++) {
-      dp[i][j] = eq(A[i - 1], B[j - 1])
-        ? dp[i - 1][j - 1] + 1
-        : Math.max(dp[i - 1][j], dp[i][j - 1])
-    }
+function shouldUseDiff(from, to) {
+  if (typeof from !== "string" || typeof to !== "string") return false
+  if (from.length < 20 || to.length < 20) return false
+  const diffs = fastDiff(from, to)
+  let changeSize = 0
+  for (const [op, text] of diffs) {
+    if (op !== fastDiff.EQUAL) changeSize += text.length
   }
-  return dp
-}
-
-function lcsEditScript(A, B, eq) {
-  const dp = lcsTable(A, B, eq)
-  let i = A.length,
-    j = B.length
-  const rev = []
-  while (i > 0 && j > 0) {
-    if (eq(A[i - 1], B[j - 1])) {
-      rev.push({ t: "keep", a: i - 1, b: j - 1 })
-      i--
-      j--
-    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
-      rev.push({ t: "del", a: i - 1 })
-      i--
-    } else {
-      rev.push({ t: "ins", b: j - 1 })
-      j--
-    }
-  }
-  while (i-- > 0) rev.push({ t: "del", a: i })
-  while (j-- > 0) rev.push({ t: "ins", b: j })
-  return rev.reverse()
+  return changeSize < to.length * 0.6
 }
 
 function diffArray(a, b, path = "") {
@@ -87,12 +61,22 @@ function diffArray(a, b, path = "") {
     const isPrimitive = !is(Object, b[idx]) || b[idx] === null
 
     if (isPrimitive) {
-      ops.push({
-        path: path + `[${idx}]`,
-        op: "replace",
-        from: a[idx],
-        to: b[idx],
-      })
+      if (shouldUseDiff(a[idx], b[idx])) {
+        ops.push({
+          path: path + `[${idx}]`,
+          op: "diff",
+          from: a[idx],
+          to: b[idx],
+          diffs: fastDiff(a[idx], b[idx]),
+        })
+      } else {
+        ops.push({
+          path: path + `[${idx}]`,
+          op: "replace",
+          from: a[idx],
+          to: b[idx],
+        })
+      }
     } else {
       ops.push({ path: path + `[${idx}]`, op: "delete", from: a[idx] })
     }
@@ -114,11 +98,15 @@ function diffArray(a, b, path = "") {
 
   return ops
 }
+
 const diff = (a, b, path = "", depth = 0) => {
   let q = []
   if (equals(a, b)) return q
 
   if (!is(Object, a) || !is(Object, b)) {
+    if (shouldUseDiff(a, b)) {
+      return [{ path, op: "diff", from: a, to: b, diffs: fastDiff(a, b) }]
+    }
     return [{ path, op: "replace", from: a, to: b }]
   }
 
@@ -178,7 +166,10 @@ export class ARJSON {
   update(json) {
     let deltas = []
     const diffs = diff(this.json, json)
+
     for (const v of diffs) {
+      let diff =
+        v.op === "diff" ? encodeFastDiff(v.diffs, this.artable.strmap) : null
       if (
         v.path === "" &&
         (!is(Object, v.from) ||
@@ -197,8 +188,7 @@ export class ARJSON {
         this.artable.strmap = this.artable.strmap
         continue
       }
-      const result = this.artable.delta(v.path, v.to, v.op, v.push)
-      this.load(result.delta)
+      this.load(this.artable.delta(v.path, v.to, v.op, 1, diff).delta)
     }
   }
   load(delta) {

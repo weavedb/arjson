@@ -16,6 +16,7 @@ class ARTable {
       nums: this.nums,
       strs: this.strs,
       strmap: this.strmap,
+      strdiffs: this.strdiffs,
     }
   }
 
@@ -29,6 +30,7 @@ class ARTable {
     vrefs,
     krefs,
     strmap,
+    strdiffs,
   }) {
     this.strmap = strmap
     this.ktypes = ktypes
@@ -39,6 +41,7 @@ class ARTable {
     this.strs = strs
     this.bools = bools
     this.keys = keys
+    this.strdiffs = strdiffs
     this.buildMap()
   }
   compact(t1, t2) {
@@ -325,7 +328,7 @@ class ARTable {
     return index
   }
 
-  delta(path, v, op = null, n) {
+  delta(path, v, op = null, n, diff) {
     const u = new Encoder(n)
     u.reset(this.strmap)
     u.single = false
@@ -351,41 +354,46 @@ class ARTable {
         pushPathStr(u, last, i)
       }
     }
-    const push = op === "delete" ? 1 : op === "replace" ? 1 : 0
-    u.push_type(_encode(v, u, prev, null, index, push, true, op))
-    return { delta: u.dump(), strmap: u.strMap }
-  }
-  delta2(path, v, op = null, n) {
-    const u = new Encoder(n)
-    u.reset(this.strmap)
-    u.single = false
-    u.dcount = this.krefs.length + 1
-    u.prev_bits = bits(u.dcount + 1)
-    u.prev_kbits = bits(u.dcount + 1)
-    const paths = parsePath(path)
-    let last = paths[paths.length - 1]
-    let index = null
-    let prev = null
-    if (typeof last === "undefined") prev = -1
-    else if (typeof last === "number") {
-      prev = this.getIndex(paths)
-      if (prev === null) return null
-      index = last
-    } else {
-      prev = this.getIndex(paths, 0)
-      if (prev !== null) prev -= 1
-      else {
-        const i = this.getIndex(paths)
-        if (i === null) return null
-        prev = u.dcount
-        pushPathStr(u, last, i)
-      }
-    }
-    const push = op === "delete" ? 1 : 0
-    u.push_type(_encode(v, u, prev, null, index, push, true, op))
+    const push = includes(op, ["delete", "diff", "replace"]) ? 1 : 0
+    u.push_type(_encode(v, u, prev, null, index, push, true, op, null, diff))
     return { delta: u.dump(), strmap: u.strMap }
   }
   compactStrMap() {
+    let strs = {}
+    for (let v of this.keys) if (Array.isArray(v)) strs[v[0]] = true
+    for (let v of this.strs) {
+      if (Array.isArray(v) && v[0] !== -1) {
+        // <-- Add check: ignore diff entries
+        strs[v[0]] = true
+      }
+    }
+    let strs_arr = []
+    for (let k in this.strmap) {
+      if (strs[k] !== true) {
+        delete this.strmap[k]
+      } else {
+        strs_arr.push({ from: +k, v: this.strmap[k] })
+      }
+    }
+    strs_arr = sortBy(v => v.from, strs_arr)
+    let i = 0
+    let smap = {}
+    let imap = {}
+    for (let v of strs_arr) {
+      v.to = i++
+      smap[v.to] = v.v
+      imap[v.from] = v.to
+    }
+    this.strmap = smap
+    for (let v of this.keys) if (Array.isArray(v)) v[0] = imap[v[0]]
+    for (let v of this.strs) {
+      if (Array.isArray(v) && v[0] !== -1) {
+        // <-- Add check: ignore diff entries
+        v[0] = imap[v[0]]
+      }
+    }
+  }
+  compactStrMap2() {
     let strs = {}
     for (let v of this.keys) if (Array.isArray(v)) strs[v[0]] = true
     for (let v of this.strs) if (Array.isArray(v)) strs[v[0]] = true
@@ -413,7 +421,7 @@ class ARTable {
 
   encode(q) {
     const d3 = new Decoder()
-    const left = d3.decode(q, this.krefs.length, this.strmap)
+    const left = d3.decode(q, this.krefs.length, this.strmap, this.strdiffs)
     const table = d3.table()
     this.compact(this.table(), table)
     const json = this.build()

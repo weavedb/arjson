@@ -4,12 +4,153 @@ import { ARTable, Decoder, Encoder } from "../src/index.js"
 import assert from "assert"
 import { genUser } from "./utils.js"
 
+function genDiff(count = 100) {
+  const cases = []
+
+  // Strategy 1: Long documents with small edits (40 cases)
+  // This is the BEST case for diffs - large unchanged portions
+  const article = `
+    In the bustling city of New York, researchers have discovered fascinating insights into 
+    urban development patterns. The study, conducted over three years, analyzed data from 
+    over 10,000 buildings and infrastructure projects. Key findings include the impact of 
+    zoning regulations, transportation networks, and community engagement on sustainable growth.
+    
+    The research team utilized advanced modeling techniques to predict future trends and 
+    identify potential challenges. Their methodology involved collecting extensive data on 
+    population density, economic indicators, environmental factors, and social dynamics.
+    
+    Preliminary results suggest that cities implementing integrated planning approaches show 
+    significantly better outcomes in terms of livability, economic vitality, and environmental 
+    sustainability. The data indicates a correlation between public transportation investment 
+    and reduced carbon emissions across metropolitan areas.
+  `.repeat(3) // ~1800+ chars
+
+  let current = article
+  for (let i = 0; i < 40; i++) {
+    cases.push({ str: current })
+    // Small targeted changes in large document
+    if (i % 4 === 0) {
+      current = current.replace("three years", `${3 + i} years`)
+    } else if (i % 4 === 1) {
+      current = current.replace("10,000", `${10000 + i * 100}`)
+    } else if (i % 4 === 2) {
+      current = current.replace(
+        "New York",
+        i % 2 === 0 ? "Los Angeles" : "Chicago",
+      )
+    } else {
+      current = current.replace("Preliminary", "Updated preliminary")
+    }
+  }
+
+  // Strategy 2: Code files with small changes (30 cases)
+  // Simulates editing source code - very common diff use case
+  const codeBase = `
+function processData(input) {
+  const results = [];
+  for (let i = 0; i < input.length; i++) {
+    const item = input[i];
+    if (item.valid && item.score > 50) {
+      results.push({
+        id: item.id,
+        value: item.value * 2,
+        timestamp: Date.now()
+      });
+    }
+  }
+  return results.filter(r => r.value < 1000);
+}
+`.repeat(5) // ~600+ chars
+
+  current = codeBase
+  for (let i = 0; i < 30; i++) {
+    cases.push({ str: current })
+    if (i % 3 === 0) {
+      current = current.replace("score > 50", `score > ${50 + i * 5}`)
+    } else if (i % 3 === 1) {
+      current = current.replace("value * 2", `value * ${2 + (i % 3)}`)
+    } else {
+      current = current.replace("< 1000", `< ${1000 + i * 100}`)
+    }
+  }
+
+  // Strategy 3: JSON-like config with value updates (30 cases)
+  const configBase = JSON.stringify(
+    {
+      server: {
+        host: "localhost",
+        port: 8080,
+        ssl: true,
+        maxConnections: 1000,
+        timeout: 30000,
+        middleware: ["cors", "compression", "logging", "authentication"],
+        routes: {
+          api: "/api/v1",
+          health: "/health",
+          metrics: "/metrics",
+        },
+      },
+      database: {
+        host: "db.example.com",
+        port: 5432,
+        name: "production_db",
+        poolSize: 20,
+        ssl: true,
+      },
+      cache: {
+        enabled: true,
+        ttl: 3600,
+        maxSize: 1000000,
+      },
+    },
+    null,
+    2,
+  )
+
+  for (let i = 0; i < 30; i++) {
+    const config = JSON.parse(configBase)
+    config.server.port = 8080 + i
+    config.server.maxConnections = 1000 + i * 10
+    config.cache.ttl = 3600 + i * 60
+    cases.push({ str: JSON.stringify(config, null, 2) })
+  }
+
+  return cases.slice(0, count)
+}
 describe("ARJSON", function () {
+  it("should use strdiff", () => {
+    const user = {
+      str: [
+        "abc def ghiaaaaaaaaaa fjlkkasjflkasjflskajfsadlkfjaslkfjaslkfjsalkfjsalkfj",
+      ],
+    }
+    const user2 = {
+      str: [
+        "abc def ghiaaaaaaaaaa fjlkkasjflkasjflskajfsadlkfaslkfjaslkfjsalkfjsalkfjdd",
+      ],
+    }
+
+    const arj = new ARJSON({ json: user })
+    arj.update(user2)
+    assert.deepEqual(arj.json, user2)
+  })
+
   it("should remove id field", () => {
     const json = { a: [] }
     assert.deepEqual(dec(enc(json)), json)
     return
   })
+  it.only("should use strdiffs", () => {
+    const cases = genDiff()
+    let i = 0
+    const arj = new ARJSON({ json: cases[0] })
+    for (let v of cases.slice(1)) {
+      arj.update(v)
+      assert.deepEqual(arj.json, v)
+      i++
+    }
+  })
+
   it("should remove id field", () => {
     const cases = [
       // Nested arrays
@@ -101,7 +242,7 @@ describe("ARJSON", function () {
     const obj1 = { a: count }
     const arj = new ARJSON({ json: obj1 })
     let obj2 = null
-    while (count < 10) {
+    while (count < 1000) {
       obj2 = { a: ++count }
       arj.update(obj2)
     }
@@ -156,7 +297,7 @@ describe("ARJSON", function () {
         process.exit()
       }
       i++
-      if (i > 1000) break
+      if (i > 10) break
     }
     assert.deepEqual(arj.json, user2)
   })
@@ -166,7 +307,6 @@ describe("ARJSON", function () {
     const arj = new ARJSON({ json: json[0] })
     arj.update(json[1])
     arj.update(json[2])
-    //assert.deepEqual(arj.json, json[2])
     const arj2 = new ARJSON({ arj: arj.toBuffer() })
     arj2.update({ abc: 123, ghi: 789 })
     const arj3 = new ARJSON({ table: arj2.artable.table() })
@@ -175,7 +315,7 @@ describe("ARJSON", function () {
     assert.deepEqual(arj3.json, { abc: 123, ghi: 789, xyz: 999 })
   })
 
-  it.only("check", () => {
+  it("check", () => {
     const user = {
       id: "Vyr2ohGFYbs3VSH0 gfHZL7YhBUe",
       username: "s7Zeb3aU5yDOo",

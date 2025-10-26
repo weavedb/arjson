@@ -1,3 +1,4 @@
+import { decodeFastDiff, applyDecodedOps } from "./diff.js"
 class Builder {
   table() {
     return {
@@ -10,6 +11,7 @@ class Builder {
       nums: this.nums,
       strs: this.strs,
       strmap: this.strmap,
+      strdiffs: this.strdiffs,
     }
   }
 
@@ -23,8 +25,10 @@ class Builder {
     vrefs,
     krefs,
     strmap,
+    strdiffs,
   }) {
     this.strmap = strmap
+    this.strdiffs = strdiffs
     this.ktypes = ktypes
     this.vrefs = vrefs
     this.krefs = krefs
@@ -34,43 +38,17 @@ class Builder {
     this.bools = bools
     this.keys = keys
   }
-  obj_merge(json, k, val) {
-    if (val.__del__) {
-      delete json[k]
-      return
-    }
-    if (val.__merge__) {
-      for (let k2 in val.__val__) {
-        if (typeof val.__val__[k2] === "undefined") delete json[k][k2]
-        else json[k][k2] = val.__val__[k2]
-      }
-    } else json[k] = val.__val__
-  }
-
-  arr_push(json, val) {
-    if (
-      val.__update__ ||
-      typeof val.__val__ !== "object" ||
-      val.__val__ === null
-    ) {
-      if (typeof val.__push__ !== "undefined") {
-        json[val.__push__].push(val.__val__)
-      } else if (typeof val.__index__ !== "undefined") {
-        if (val.__del__) json.splice(val.__index__, val.__remove__)
-        else json.splice(val.__index__, val.__remove__, val.__val__)
-      } else json.push(val.__val__)
-    }
-  }
 
   build() {
-    this.arrs = {}
-    this.objs = {}
-    this.nc = 0
-    this.bc = 0
-    this.sc = 0
+    let obj = structuredClone(this.table())
+    obj.arrs = {}
+    obj.objs = {}
+    obj.nc = 0
+    obj.bc = 0
+    obj.sc = 0
 
     let _json = null
-    if (this.vrefs.length === 0) {
+    if (obj.vrefs.length === 0) {
       const r = getVal(0, this)
       return r.__val__
     }
@@ -91,19 +69,20 @@ class Builder {
         ? init[k[0]][k[1]] === true
         : false
 
-    for (let vi = 0; vi < this.vrefs.length; vi++) {
-      const v = this.vrefs[vi]
+    for (let vi = 0; vi < obj.vrefs.length; vi++) {
+      const v = obj.vrefs[vi]
       const keys = []
-      getKey(v, keys, this)
-      const val = getVal(i, this)
+      getKey(v, keys, obj)
+      const val = getVal(i, obj)
       if (Array.isArray(val.__val__) && val.__val__.length === 0) {
-        this.arrs[v + 1] = true
+        obj.arrs[v + 1] = true
       }
       i++
 
       let json = _json
       for (let i2 = 0; i2 < keys.length; i2++) {
         const k = keys[i2]
+
         if (k[0] === null) {
           _json = val.__val__
           continue
@@ -123,7 +102,7 @@ class Builder {
             if (i2 === keys.length - 2) {
               const k2 = keys[i2 + 1]
               if (type(k2) === 0) {
-                this.arr_push(json, val)
+                arr_push(json, val, obj)
                 break
               }
             } else {
@@ -144,18 +123,22 @@ class Builder {
             json = _json
             if (i2 === keys.length - 2) {
               const k2 = keys[i2 + 1]
-              this.obj_merge(json, k2[0], val)
+              obj_merge(json, k2[0], val, obj)
               break
             }
           }
           if (i2 !== keys.length - 2) continue
         } else if (i2 === 0) {
           const k2 = keys[i2 + 1]
+          if (!k2) {
+            arr_push(json, val, obj)
+            break
+          }
           const t1 = type(k)
           const t2 = type(k2)
           if (t1 === 0) {
             if (keys.length === 1) {
-              this.arr_push(json, val)
+              arr_push(json, val, obj)
               break
             } else if (keys.length === 2) {
               if (!ex(k2) || k2[2] === true) {
@@ -163,7 +146,7 @@ class Builder {
                 json.push([])
               }
               json = json[json.length - 1]
-              this.arr_push(json, val)
+              arr_push(json, val, obj)
               break
             }
 
@@ -183,15 +166,15 @@ class Builder {
           } else if (t1 === 1) {
             if (keys.length === 2) {
               if (val.__del__) delete json[k2[0]]
-              else this.obj_merge(json, k2[0], val)
+              else obj_merge(json, k2[0], val, obj)
               break
             } else if (keys.length === 3 && t2 === 1) {
               const k3 = keys[i2 + 2]
               const t3 = type(k3)
               if (typeof k2[3] !== "undefined") {
-                const parentPos = this.krefs[k2[3] - 2]
+                const parentPos = obj.krefs[k2[3] - 2]
                 if (parentPos && parentPos > 0) {
-                  const parentKey = this.keys[parentPos - 1]
+                  const parentKey = obj.keys[parentPos - 1]
                   if (typeof parentKey === "string") {
                     if (
                       typeof json[parentKey] !== "object" ||
@@ -259,7 +242,7 @@ class Builder {
             }
           } else if (jtype === 0 && ctype === 0) {
             if (ntype === 0) {
-              if ((!ex(k2) || k2[2] === true) && this.arrs[k2[3]] !== true) {
+              if ((!ex(k2) || k2[2] === true) && obj.arrs[k2[3]] !== true) {
                 set(k2)
                 json.push([])
                 json = json[json.length - 1]
@@ -293,15 +276,15 @@ class Builder {
                 json.push([])
               }
               json = json[json.length - 1]
-              this.arr_push(json, val)
-            } else this.arr_push(json, val)
+              arr_push(json, val, obj)
+            } else arr_push(json, val, obj)
 
             break
           } else if (ctype === 1 && ntype === 2) {
             if (val.__del__) delete json[k2[0]]
             else {
               if (k2[1] === true) for (let kk in json) delete json[kk[0]]
-              this.obj_merge(json, k2[0], val)
+              obj_merge(json, k2[0], val, obj)
             }
             break
           } else if (ctype === 2 && jtype === 1) {
@@ -310,7 +293,7 @@ class Builder {
                 json[k[0]] = []
               }
               json = json[k[0]]
-              this.arr_push(json, val)
+              arr_push(json, val, obj)
             } else if (ntype === 1) {
               if (
                 typeof json[k[0]] !== "object" ||
@@ -329,7 +312,7 @@ class Builder {
               ) {
                 json[k[0]] = {}
               }
-              this.obj_merge(json[k[0]], k2[0], val)
+              obj_merge(json[k[0]], k2[0], val, obj)
             }
             break
           } else if (ctype === 0 && ntype === 1) {
@@ -386,7 +369,10 @@ const get = (obj, type) => {
   let val = null
   if (type === 7 || type === 2) {
     let str = obj.strs[obj.sc++]
-    if (Array.isArray(str)) str = obj.strmap[str[0].toString()]
+    if (Array.isArray(str)) {
+      if (str[0] === -1) str = obj.strdiffs[str[1]]
+      else str = obj.strmap[str[0].toString()]
+    }
     val = str
   } else if (type === 4) val = obj.nums[obj.nc++]
   else if (type === 5) val = obj.nums[obj.nc++]
@@ -420,6 +406,57 @@ const getVal = (i, obj) => {
   } else if (type === 0) val = { __del__: true }
   else val = { __val__: get(obj, type) }
   return val
+}
+
+const obj_merge = (json, k, val, obj) => {
+  if (val.__del__) {
+    delete json[k]
+    return
+  }
+  if (val.__merge__) {
+    for (let k2 in val.__val__) {
+      if (typeof val.__val__[k2] === "undefined") delete json[k][k2]
+      else json[k][k2] = val.__val__[k2]
+    }
+  } else if (val.__val__ instanceof Uint8Array) {
+    console.log()
+    console.log(
+      "diffsize",
+      val.__val__.length,
+      "original tx size",
+      json[k].length,
+    )
+    json[k] = applyDecodedOps(json[k], decodeFastDiff(val.__val__, obj.strmap))
+    console.log("newsize", json[k].length)
+  } else json[k] = val.__val__
+}
+
+const arr_push = (json, val, obj) => {
+  if (
+    val.__update__ ||
+    typeof val.__val__ !== "object" ||
+    val.__val__ === null
+  ) {
+    if (typeof val.__push__ !== "undefined") {
+      json[val.__push__].push(val.__val__)
+    } else if (typeof val.__index__ !== "undefined") {
+      if (val.__del__) json.splice(val.__index__, val.__remove__)
+      else {
+        let _val = val.__val__
+        if (
+          val.__remove__ &&
+          typeof json[val.__index__] === "string" &&
+          val.__val__ instanceof Uint8Array
+        ) {
+          _val = applyDecodedOps(
+            json[val.__index__],
+            decodeFastDiff(val.__val__, obj.strmap),
+          )
+        }
+        json.splice(val.__index__, val.__remove__, _val)
+      }
+    } else json.push(val.__val__)
+  }
 }
 
 export { Builder, getKey, getVal }
