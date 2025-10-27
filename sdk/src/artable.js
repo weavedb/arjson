@@ -398,6 +398,13 @@ class ARTable {
   encode(q) {
     const d3 = new Decoder()
     const left = d3.decode(q, this.krefs.length, this.strmap, this.strdiffs)
+
+    // Handle single value replacements (like null)
+    if (d3.single) {
+      // When the entire root is replaced with a single value, return it directly
+      return { left: frombits(left), json: d3.json }
+    }
+
     const table = d3.table()
     this.compact(this.table(), table)
     const json = this.build()

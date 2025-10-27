@@ -168,6 +168,11 @@ class Builder {
               if (!ex(k2) || k2[2] === true) {
                 set(k2)
                 json.push([])
+              } else if (
+                json.length > 0 &&
+                !Array.isArray(json[json.length - 1])
+              ) {
+                json.push([])
               }
               json = json[json.length - 1]
             } else if (t2 === 1) {
@@ -210,24 +215,11 @@ class Builder {
           const ctype = type(k)
           const k2 = keys[i2 + 1]
           const ntype = type(k2)
+
           if (jtype === 1 && ctype === 1) {
-            let targetKey = null
-            for (let j = i2 - 1; j >= 0; j--) {
-              if (type(keys[j]) === 2) {
-                targetKey = keys[j][0]
-                break
-              }
-            }
-            if (targetKey !== null) {
-              if (
-                typeof json[targetKey] !== "object" ||
-                json[targetKey] === null ||
-                Array.isArray(json[targetKey])
-              ) {
-                json[targetKey] = {}
-              }
-              json = json[targetKey]
-            }
+            // FIXED: Skip object index keys in the middle - we're already at the right level
+            // The object index key just indicates we're within an object structure
+            // The actual navigation happens when we encounter string keys (type 2)
             continue
           }
 
@@ -260,7 +252,19 @@ class Builder {
                 set(k2)
                 json.push([])
                 json = json[json.length - 1]
-              } else json = json[json.length - 1]
+              } else if (
+                json &&
+                json.length > 0 &&
+                !Array.isArray(json[json.length - 1])
+              ) {
+                json.push([])
+                json = json[json.length - 1]
+              } else if (json && json.length > 0) {
+                json = json[json.length - 1]
+              } else if (json) {
+                json.push([])
+                json = json[json.length - 1]
+              }
             } else if (ntype === 1) {
               if (!ex(k2) || k2[2] === true) {
                 set(k2)

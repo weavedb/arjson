@@ -144,7 +144,7 @@ export class ARJSON {
       this.json = this.artable.build()
       this.deltas = []
     } else if (arj) {
-      this.deltas = this.fromBuffer(arj)
+      this.deltas = ARJSON.fromBuffer(arj)
       d.decode(this.deltas[0])
       this.artable = new ARTable(d.table())
       this.json = this.artable.build()
@@ -161,6 +161,9 @@ export class ARJSON {
       this.artable = new ARTable(d.table())
       this.deltas = [arj]
     }
+  }
+  table() {
+    return this.artable.table()
   }
   update(json) {
     let deltas = []
@@ -179,6 +182,7 @@ export class ARJSON {
         u.reset(this.artable.strmap)
         const newArj = encode(json, u, null, this.artable.strmap)
         deltas.push(newArj)
+        this.deltas.push(newArj)
         const d = new Decoder()
         d.decode(newArj, null, this.artable.strmap)
         this.artable.strmap = mergeLeft(u.strMap, this.artable.strmap)
@@ -199,7 +203,7 @@ export class ARJSON {
     delete this.cache
     return delta
   }
-  fromBuffer(buffer) {
+  static fromBuffer(buffer) {
     const buf = new Uint8Array(buffer)
     let offset = 0
     const deltas = []
