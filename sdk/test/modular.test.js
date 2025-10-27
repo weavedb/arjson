@@ -369,15 +369,41 @@ describe("ARJSON", function () {
     arj.update(user2)
     assert.deepEqual(arj.json, user2)
   })
-  it.only("should remove id field", () => {
-    const json = [
+  it("should remove id field", () => {
+    /*const json = [
       ["_/_", 1],
       ["_/_config", 1],
       ["_/users", 1],
       ["_config/info", 1],
-    ]
-
+    ]*/
+    //const json = { rules: ["add,set,update,upsert,del", [["deny()"]]] }
+    /*const json = {
+      indexes: [
+        [
+          ["name", "asc"],
+          ["age", "asc"],
+        ],
+      ],
+      }*/
+    const json = {
+      type: "object",
+      required: ["index"],
+      properties: {
+        index: { type: "number" },
+        auth: { type: "object" },
+        triggers: { type: "object" },
+      },
+    }
     assert.deepEqual(dec(enc(json)), json)
     return
+  })
+  it.only("should handle null", () => {
+    const json = { name: "A" }
+    const arj = new ARJSON({ json })
+    arj.update(null)
+    const buf = arj.toBuffer()
+    const deltas = ARJSON.fromBuffer(buf)
+    const arj2 = new ARJSON({ arj: buf })
+    assert.equal(arj2.json, null)
   })
 })
