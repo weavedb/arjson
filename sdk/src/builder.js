@@ -1,5 +1,174 @@
 import { decodeFastDiff, applyDecodedOps } from "./diff.js"
 
+// ── Build helpers (module-level so they aren't re-created per build) ──
+
+// type(k): for a build-key tuple [k0, k1, ...] derived from getKey,
+// return the container type at this position.
+//   k[0] === string  → 2 (string-keyed object)
+//   k[0] === 0       → 0 (array)
+//   k[0] === 1       → 1 (object)
+//   k[0] === 2       → 2 (string-ref before resolution)
+//   k[0] === null    → null (no-key root marker)
+const buildType = k => (typeof k[0] === "string" ? 2 : k[0])
+
+// init bucket helpers: which (bucket, slot) pairs in this build call
+// have already been initialized. Used to avoid re-creating the same
+// container twice in a single build pass when multiple vrefs share a
+// path. Bucket 0 = array slots, bucket 1 = object slots. Returns true
+// when the bucket key was actionable (i.e. fully specified k tuple).
+const buildSet = (k, init0, init1) => {
+  if (k && k[0] !== null && k[0] !== undefined && k[1] !== undefined) {
+    if (k[0] === 0) init0.add(k[1])
+    else init1.add(k[1])
+    return true
+  }
+  return false
+}
+const buildEx = (k, init0, init1) =>
+  k && k[0] !== null && k[0] !== undefined && k[1] !== undefined
+    ? k[0] === 0 ? init0.has(k[1]) : init1.has(k[1])
+    : false
+
+// handleMiddleKey: dispatch for build's inner loop when this key is
+// neither the first nor in the terminal/terminal-1 position. Modifies
+// `json` (the current container the build is descending into) and
+// returns the new value of `json`. Side effect: may add to init0/init1
+// via the captured `set`/`ex` closures.
+//
+// The dispatch is on (jtype, ctype, ntype) where:
+//   jtype = 0 if json is an array, 1 if it's an object
+//   ctype = type(k)  (this position's key shape)
+//   ntype = type(k2) (next position's key shape)
+//
+// The 8 reachable combinations:
+//   jtype 1 + ctype 1:        object-index passthrough → skip (no json change)
+//   jtype 1 + ctype 2 + ntype 0: descend into array under string key
+//   jtype 1 + ctype 2 + ntype 1: descend into object under string key
+//   jtype 1 + ctype 2 + ntype 2: descend into object under string key
+//   jtype 0 + ctype 0 + ntype 0: descend into array under array slot
+//   jtype 0 + ctype 0 + ntype 1: descend into object under array slot
+//   jtype 0 + ctype 0 + ntype 2: descend into object under array slot
+const handleMiddleKey = (json, k, k2, type, set, ex) => {
+  const jtype = Array.isArray(json) ? 0 : 1
+  const ctype = type(k)
+  const ntype = type(k2)
+
+  // Skip object-index keys in the middle of the chain — we're already
+  // at the right object level. Actual navigation happens when we
+  // encounter string keys (type 2).
+  if (jtype === 1 && ctype === 1) return json
+
+  if (jtype === 1 && ctype === 2) {
+    if (ntype === 0) {
+      if (!Array.isArray(json[k[0]]) || k2?.[2] === true) json[k[0]] = []
+      return json[k[0]]
+    }
+    // ntype 1 or 2 → object descent
+    if (
+      typeof json[k[0]] !== "object" ||
+      json[k[0]] === null ||
+      Array.isArray(json[k[0]])
+    ) {
+      json[k[0]] = {}
+    }
+    return json[k[0]]
+  }
+
+  if (jtype === 0 && ctype === 0) {
+    if (ntype === 0) {
+      if (!ex(k2) || k2[2] === true) {
+        set(k2)
+        json.push([])
+        return json[json.length - 1]
+      }
+      if (json.length > 0 && !Array.isArray(json[json.length - 1])) {
+        set(k2)
+        json.push([])
+        return json[json.length - 1]
+      }
+      if (json.length > 0) {
+        set(k2)
+        return json[json.length - 1]
+      }
+      // json is array of length 0
+      set(k2)
+      json.push([])
+      return json[json.length - 1]
+    }
+    // ntype 1 or 2 → object slot
+    if (!ex(k2) || k2[2] === true) {
+      set(k2)
+      json.push({})
+    }
+    return json[json.length - 1]
+  }
+
+  return json
+}
+
+// handleTerminalKey: the i2 === keys.length - 2 case in build's inner
+// loop — always exits after one of: setting/deleting a keyed value,
+// arr_pushing into a target slot, or descending into the last container
+// before applying val. Returns the new json (caller breaks out
+// regardless of return).
+const handleTerminalKey = (json, k, k2, val, obj, type, set, ex) => {
+  const jtype = Array.isArray(json) ? 0 : 1
+  const ctype = type(k)
+  const ntype = type(k2)
+
+  if (ctype === 0 && ntype === 0) {
+    if (!ex(k2) || k2[2] === true) {
+      set(k2)
+      json.push([])
+    }
+    json = json[json.length - 1]
+    arr_push(json, val, obj)
+    return json
+  }
+  if (ctype === 1 && ntype === 2) {
+    if (val.kind === KIND.DEL) delete json[k2[0]]
+    else {
+      if (k2[1] === true) for (const kk in json) delete json[kk[0]]
+      obj_merge(json, k2[0], val, obj)
+    }
+    return json
+  }
+  if (ctype === 2 && jtype === 1) {
+    if (ntype === 0) {
+      if (!Array.isArray(json[k[0]]) || k2?.[2] === true) json[k[0]] = []
+      json = json[k[0]]
+      arr_push(json, val, obj)
+      return json
+    }
+    if (ntype === 1) {
+      if (
+        typeof json[k[0]] !== "object" ||
+        json[k[0]] === null ||
+        Array.isArray(json[k[0]])
+      ) {
+        json[k[0]] = {}
+      }
+      return json[k[0]]
+    }
+    if (ntype === 2) {
+      if (
+        typeof json[k[0]] !== "object" ||
+        json[k[0]] === null ||
+        Array.isArray(json[k[0]])
+      ) {
+        json[k[0]] = {}
+      }
+      obj_merge(json[k[0]], k2[0], val, obj)
+      return json
+    }
+  }
+  if (ctype === 0 && ntype === 1) {
+    json.push({})
+    return json[json.length - 1]
+  }
+  return json
+}
+
 // Discriminated-union kinds for the value envelope produced by getVal.
 // Was previously a tagged-union of optional underscore-prefixed flags
 // (__val__, __del__, __merge__, __update__, __index__, __remove__).
@@ -291,19 +460,11 @@ class Builder {
     // front, so use Set rather than a fixed-size typed array.
     const init0 = new Set()
     const init1 = new Set()
-    const type = k => (typeof k[0] === "string" ? 2 : k[0])
-    const set = k => {
-      if (k && k[0] !== null && k[0] !== undefined && k[1] !== undefined) {
-        if (k[0] === 0) init0.add(k[1])
-        else init1.add(k[1])
-        return true
-      }
-      return false
-    }
-    const ex = k =>
-      k && k[0] !== null && k[0] !== undefined && k[1] !== undefined
-        ? k[0] === 0 ? init0.has(k[1]) : init1.has(k[1])
-        : false
+    // Local aliases to module-level helpers (closes over the per-call
+    // init buckets but otherwise is the same logic).
+    const type = buildType
+    const set = k => buildSet(k, init0, init1)
+    const ex = k => buildEx(k, init0, init1)
 
     // Reuse a single `keys` array across vref iterations — was a fresh
     // [] per iteration. For wide inputs this saves an allocation per
@@ -447,137 +608,17 @@ class Builder {
           continue
         }
         if (i2 > 0 && i2 < keys.length - 2) {
-          const jtype = Array.isArray(json) ? 0 : 1
-          const ctype = type(k)
-          const k2 = keys[i2 + 1]
-          const ntype = type(k2)
-
-          if (jtype === 1 && ctype === 1) {
-            // Skip object-index keys in the middle of the chain — we're
-            // already at the right object level. Actual navigation
-            // happens when we encounter string keys (type 2).
-            continue
-          }
-
-          if (jtype === 1 && ctype === 2) {
-            if (ntype === 0) {
-              if (!Array.isArray(json[k[0]]) || k2?.[2] === true) {
-                json[k[0]] = []
-              }
-              json = json[k[0]]
-            } else if (ntype === 1) {
-              if (
-                typeof json[k[0]] !== "object" ||
-                json[k[0]] === null ||
-                Array.isArray(json[k[0]])
-              )
-                json[k[0]] = {}
-              json = json[k[0]]
-            } else if (ntype === 2) {
-              if (
-                typeof json[k[0]] !== "object" ||
-                json[k[0]] === null ||
-                Array.isArray(json[k[0]])
-              )
-                json[k[0]] = {}
-              json = json[k[0]]
-            }
-          } else if (jtype === 0 && ctype === 0) {
-            if (ntype === 0) {
-              if (!ex(k2) || k2[2] === true) {
-                set(k2)
-                json.push([])
-                json = json[json.length - 1]
-              } else if (
-                json &&
-                json.length > 0 &&
-                !Array.isArray(json[json.length - 1])
-              ) {
-                set(k2)
-                json.push([])
-                json = json[json.length - 1]
-              } else if (json && json.length > 0) {
-                set(k2)
-                json = json[json.length - 1]
-              } else if (json) {
-                set(k2)
-                json.push([])
-                json = json[json.length - 1]
-              }
-            } else if (ntype === 1) {
-              if (!ex(k2) || k2[2] === true) {
-                set(k2)
-                json.push({})
-              }
-              json = json[json.length - 1]
-            } else if (ntype === 2) {
-              if (!ex(k2) || k2[2] === true) {
-                set(k2)
-                json.push({})
-              }
-              json = json[json.length - 1]
-            }
-          }
+          json = handleMiddleKey(json, k, keys[i2 + 1], type, set, ex)
           continue
         }
         if (i2 === keys.length - 2) {
-          const jtype = Array.isArray(json) ? 0 : 1
-          const ctype = type(k)
-          const k2 = keys[i2 + 1]
-          const ntype = type(k2)
-
-          if (ctype === 0 && ntype === 0) {
-            // Note: was guarded by `typeof val.__push__ === "undefined"`
-            // — that flag was never set anywhere, so the alternative
-            // branch was dead. Removed the dead branch, keeping the
-            // setup-then-arr_push path that was always taken.
-            if (!ex(k2) || k2[2] === true) {
-              set(k2)
-              json.push([])
-            }
-            json = json[json.length - 1]
-            arr_push(json, val, obj)
-            break
-          } else if (ctype === 1 && ntype === 2) {
-            if (val.kind === KIND.DEL) delete json[k2[0]]
-            else {
-              if (k2[1] === true) for (let kk in json) delete json[kk[0]]
-              obj_merge(json, k2[0], val, obj)
-            }
-            break
-          } else if (ctype === 2 && jtype === 1) {
-            if (ntype === 0) {
-              if (!Array.isArray(json[k[0]]) || k2?.[2] === true) {
-                json[k[0]] = []
-              }
-              json = json[k[0]]
-              arr_push(json, val, obj)
-            } else if (ntype === 1) {
-              if (
-                typeof json[k[0]] !== "object" ||
-                json[k[0]] === null ||
-                Array.isArray(json[k[0]])
-              ) {
-                json[k[0]] = {}
-              }
-              json = json[k[0]]
-              break
-            } else if (ntype === 2) {
-              if (
-                typeof json[k[0]] !== "object" ||
-                json[k[0]] === null ||
-                Array.isArray(json[k[0]])
-              ) {
-                json[k[0]] = {}
-              }
-              obj_merge(json[k[0]], k2[0], val, obj)
-            }
-            break
-          } else if (ctype === 0 && ntype === 1) {
-            json.push({})
-            json = json[json.length - 1]
-            break
-          }
+          // Terminal-key dispatch always exits the inner loop. The
+          // helper performs the action and returns the new json (which
+          // may have descended into a child container).
+          json = handleTerminalKey(
+            json, k, keys[i2 + 1], val, obj, type, set, ex,
+          )
+          break
         }
       }
       _json ??= json
