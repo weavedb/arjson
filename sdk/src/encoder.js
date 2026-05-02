@@ -250,7 +250,7 @@ class Encoder {
   }
 
   get_diff(v, prev) {
-    let diff = prev === null ? v : v - prev
+    let diff = prev === -1 ? v : v - prev
     let isDiff = false
     if (diff < 0) {
       diff = Math.abs(diff) + 3
@@ -263,7 +263,7 @@ class Encoder {
   push_vlink(v) {
     // Inline get_diff: avoids method call + pack/unpack of result.
     const prev = this.prev_link
-    let diff = prev === null ? v : v - prev
+    let diff = prev === -1 ? v : v - prev
     let isDiff
     if (diff < 0) {
       diff = -diff + 3
@@ -288,7 +288,7 @@ class Encoder {
 
   push_klink(v) {
     const prev = this.prev_klink
-    let diff = prev === null ? v : v - prev
+    let diff = prev === -1 ? v : v - prev
     let isDiff
     if (diff < 0) {
       diff = -diff + 3
@@ -714,8 +714,8 @@ class Encoder {
     this.prev_kbits = 1
     this.prev_num = 0
     this.nums_count = 0
-    this.prev_link = null
-    this.prev_klink = null
+    this.prev_link = -1
+    this.prev_klink = -1
     this.single = true
     this.len = 0
     this.dlen = 0
