@@ -239,14 +239,18 @@ class Encoder {
 
   push_vflag(flag) {
     this.add_vflags(flag, 1)
+    if (flag) this.vflags_one++; else this.vflags_zero++
   }
 
   push_bool(bool) {
-    this.add_bools(bool ? 1 : 0, 1)
+    const v = bool ? 1 : 0
+    this.add_bools(v, 1)
+    if (v) this.bools_one++; else this.bools_zero++
   }
 
   push_kflag(flag) {
     this.add_kflags(flag, 1)
+    if (flag) this.kflags_one++; else this.kflags_zero++
   }
 
   get_diff(v, prev) {
@@ -282,6 +286,7 @@ class Encoder {
     if (vfused === 0) this.vflags[vfidx] = flag
     else this.vflags[vfidx] = (this.vflags[vfidx] << 1) | flag
     this.vflags_len = vflen + 1
+    if (flag) this.vflags_one++; else this.vflags_zero++
     this._push_vlink(v2, isDiff, this.dcount)
     this.rcount++
   }
@@ -305,6 +310,7 @@ class Encoder {
     if (kfused === 0) this.kflags[kfidx] = flag
     else this.kflags[kfidx] = (this.kflags[kfidx] << 1) | flag
     this.kflags_len = kflen + 1
+    if (flag) this.kflags_one++; else this.kflags_zero++
     this._push_klink(v2, isDiff, this.dcount)
   }
 
@@ -750,6 +756,14 @@ class Encoder {
     this.vflags_len = 0
     this.kflags_len = 0
     this.bools_len = 0
+    // Counters for v1.1 RLE-flag column encoding. We track zeros/ones
+    // as columns are populated so dump() can emit a 2-bit prefix:
+    //   00 = all zeros (no body)
+    //   01 = all ones (no body)
+    //   10 = mixed (followed by raw body bits)
+    this.vflags_zero = 0; this.vflags_one = 0
+    this.kflags_zero = 0; this.kflags_one = 0
+    this.bools_zero = 0; this.bools_one = 0
     this.keys_len = 0
     this.types_len = 0
     this.nums_len = 0
@@ -855,16 +869,40 @@ class Encoder {
       this.add_dc(0, 1)
       this.short_dc(this.rcount)
     }
+    // v1.1 RLE-flag encoding: prefix vflags, kflags, bools columns with
+    // a 2-bit mode selector when the column is non-empty:
+    //   00 = all zeros (no body)
+    //   01 = all ones  (no body)
+    //   10 = mixed     (followed by raw len bits)
+    //   11 = reserved
+    // Empty columns (len=0) emit nothing. Structurally vflags_len > 0
+    // in structured mode, but kflags_len and bools_len can be 0.
+    const vfMode = this.vflags_len === 0 ? -1
+      : this.vflags_zero === this.vflags_len ? 0
+      : this.vflags_one === this.vflags_len ? 1 : 2
+    const kfMode = this.kflags_len === 0 ? -1
+      : this.kflags_zero === this.kflags_len ? 0
+      : this.kflags_one === this.kflags_len ? 1 : 2
+    const bMode = this.bools_len === 0 ? -1
+      : this.bools_zero === this.bools_len ? 0
+      : this.bools_one === this.bools_len ? 1 : 2
+    const vfHeader = vfMode === -1 ? 0 : 2
+    const kfHeader = kfMode === -1 ? 0 : 2
+    const bHeader = bMode === -1 ? 0 : 2
+    const vfBody = vfMode === 2 ? this.vflags_len : 0
+    const kfBody = kfMode === 2 ? this.kflags_len : 0
+    const bBody = bMode === 2 ? this.bools_len : 0
+
     const totalBits =
       this.dc_len +
-      this.vflags_len +
+      vfHeader + vfBody +
       this.vlinks_len +
-      this.kflags_len +
+      kfHeader + kfBody +
       this.klinks_len +
       this.keys_len +
       this.types_len +
       this.nums_len +
-      this.bools_len +
+      bHeader + bBody +
       this.kvals_len +
       this.vals_len +
       this.strdiffs_len
@@ -873,26 +911,59 @@ class Encoder {
     const outLength = finalBits / 8
     const out = new Uint8Array(outLength)
 
-    // Hot path: pack all column bits into `out`. Was implemented as
-    // closure-based writeBits/writeBuffer; V8 had trouble inlining
-    // them since they captured 3 mutable variables. Straight inline
-    // loop with unrolled column ordering is much faster.
+    // Pack columns. For vflags/kflags/bools, write the 2-bit prefix first
+    // (when len > 0) then the body only if mode is mixed.
     let outIndex = 0
     let accumulator = 0
     let accBits = 0
-    const _bufs = [
-      this.dc, this.vflags, this.vlinks, this.kflags, this.klinks,
-      this.keys, this.kvals, this.types, this.bools, this.nums,
-      this.vals, this.strdiffs,
-    ]
-    const _lens = [
-      this.dc_len, this.vflags_len, this.vlinks_len, this.kflags_len,
-      this.klinks_len, this.keys_len, this.kvals_len, this.types_len,
-      this.bools_len, this.nums_len, this.vals_len, this.strdiffs_len,
+    // Per-column entries are { buf, len, prefix, prefixBits }.
+    // prefixBits is 0 for columns without prefix and 2 for prefixed.
+    // For prefixed mode 0 or 1, the body length is 0.
+    const _cols = [
+      { buf: this.dc,        len: this.dc_len,        prefix: 0, prefixBits: 0 },
+      { buf: this.vflags,    len: vfBody,             prefix: vfMode | 0, prefixBits: vfHeader },
+      { buf: this.vlinks,    len: this.vlinks_len,    prefix: 0, prefixBits: 0 },
+      { buf: this.kflags,    len: kfBody,             prefix: kfMode | 0, prefixBits: kfHeader },
+      { buf: this.klinks,    len: this.klinks_len,    prefix: 0, prefixBits: 0 },
+      { buf: this.keys,      len: this.keys_len,      prefix: 0, prefixBits: 0 },
+      { buf: this.kvals,     len: this.kvals_len,     prefix: 0, prefixBits: 0 },
+      { buf: this.types,     len: this.types_len,     prefix: 0, prefixBits: 0 },
+      { buf: this.bools,     len: bBody,              prefix: bMode | 0, prefixBits: bHeader },
+      { buf: this.nums,      len: this.nums_len,      prefix: 0, prefixBits: 0 },
+      { buf: this.vals,      len: this.vals_len,      prefix: 0, prefixBits: 0 },
+      { buf: this.strdiffs,  len: this.strdiffs_len,  prefix: 0, prefixBits: 0 },
     ]
     for (let ci = 0; ci < 12; ci++) {
-      const buffer = _bufs[ci]
-      let remaining = _lens[ci]
+      const col = _cols[ci]
+      // Write prefix bits if any.
+      if (col.prefixBits > 0) {
+        let num = col.prefix
+        let numBits = col.prefixBits
+        while (numBits > 0) {
+          const free = 8 - accBits
+          if (numBits <= free) {
+            accumulator = (accumulator << numBits) | (num & ((1 << numBits) - 1))
+            accBits += numBits
+            numBits = 0
+            if (accBits === 8) {
+              out[outIndex++] = accumulator
+              accumulator = 0
+              accBits = 0
+            }
+          } else {
+            const shift = numBits - free
+            const part = num >>> shift
+            accumulator = (accumulator << free) | (part & ((1 << free) - 1))
+            out[outIndex++] = accumulator
+            num = num & ((1 << shift) - 1)
+            numBits -= free
+            accumulator = 0
+            accBits = 0
+          }
+        }
+      }
+      const buffer = col.buf
+      let remaining = col.len
       const buflen = buffer.length
       let bi = 0
       while (remaining > 0 && bi < buflen) {

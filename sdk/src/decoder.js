@@ -374,15 +374,28 @@ class Decoder {
   }
 
   getVflags() {
+    const len = this.len
+    if (len === 0) return
+    // v1.1 RLE prefix: 2 bits.
+    const mode = this.n(2)
+    const vflags = this.vflags
+    if (mode === 0) {
+      for (let i = 0; i < len; i++) vflags.push(0)
+      return
+    }
+    if (mode === 1) {
+      for (let i = 0; i < len; i++) vflags.push(1)
+      return
+    }
+    if (mode !== 2) {
+      throw new Error("ARJSON decoder: invalid vflags mode " + mode)
+    }
     const maxBits = this.o.length * 8 - this.c
-    if (this.len > maxBits) {
+    if (len > maxBits) {
       throw new Error("ARJSON decoder: vflags length exceeds remaining buffer")
     }
-    // Inline n(1) for the hot bit-by-bit flag read. Avoids 1721 method
-    // calls + function-frame allocation for each 1-bit read.
+    // Inline n(1) for the hot bit-by-bit flag read.
     const o = this.o
-    const len = this.len
-    const vflags = this.vflags
     let c = this.c
     for (let i = 0; i < len; i++) {
       vflags.push((o[c >>> 3] >> (7 - (c & 7))) & 1)
@@ -393,12 +406,25 @@ class Decoder {
 
   getKflags() {
     const need = this.key_length - 1 - this.keylen
+    if (need <= 0) return
+    const mode = this.n(2)
+    const kflags = this.kflags
+    if (mode === 0) {
+      for (let i = 0; i < need; i++) kflags.push(0)
+      return
+    }
+    if (mode === 1) {
+      for (let i = 0; i < need; i++) kflags.push(1)
+      return
+    }
+    if (mode !== 2) {
+      throw new Error("ARJSON decoder: invalid kflags mode " + mode)
+    }
     const maxBits = this.o.length * 8 - this.c
     if (need > maxBits) {
       throw new Error("ARJSON decoder: kflags length exceeds remaining buffer")
     }
     const o = this.o
-    const kflags = this.kflags
     let c = this.c
     for (let i = 0; i < need; i++) {
       kflags.push((o[c >>> 3] >> (7 - (c & 7))) & 1)
@@ -605,10 +631,28 @@ class Decoder {
   }
 
   getBools() {
+    // First count how many bools to read so we can dispatch on the
+    // 2-bit mode prefix (skips it if the column is empty).
+    let count = 0
     for (let _v of this.vtypes) {
       let v = Array.isArray(_v) ? _v[3] : _v
-      if (v === 3) this.bools.push(this.n(1) === 1)
+      if (v === 3) count++
     }
+    if (count === 0) return
+    const mode = this.n(2)
+    const bools = this.bools
+    if (mode === 0) {
+      for (let i = 0; i < count; i++) bools.push(false)
+      return
+    }
+    if (mode === 1) {
+      for (let i = 0; i < count; i++) bools.push(true)
+      return
+    }
+    if (mode !== 2) {
+      throw new Error("ARJSON decoder: invalid bools mode " + mode)
+    }
+    for (let i = 0; i < count; i++) bools.push(this.n(1) === 1)
   }
 
   getNums() {
