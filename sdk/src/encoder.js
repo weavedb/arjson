@@ -274,9 +274,15 @@ class Encoder {
   }
 
   push_vlink(v) {
-    let result = this.get_diff(v, this.prev_link)
-    const isDiff = (result & 1) === 1
-    const v2 = Math.floor(result / 2)
+    // Inline get_diff: avoids method call + pack/unpack of result.
+    const prev = this.prev_link
+    let diff = prev === null ? v : v - prev
+    let isDiff
+    if (diff < 0) {
+      diff = -diff + 3
+      isDiff = diff < 7
+    } else isDiff = diff < 4
+    const v2 = isDiff ? diff : v
     this.prev_link = v
     this.push_vflag(isDiff ? 1 : 0)
     this._push_vlink(v2, isDiff, this.dcount)
@@ -284,9 +290,14 @@ class Encoder {
   }
 
   push_klink(v) {
-    let result = this.get_diff(v, this.prev_klink)
-    const isDiff = (result & 1) === 1
-    const v2 = Math.floor(result / 2)
+    const prev = this.prev_klink
+    let diff = prev === null ? v : v - prev
+    let isDiff
+    if (diff < 0) {
+      diff = -diff + 3
+      isDiff = diff < 7
+    } else isDiff = diff < 4
+    const v2 = isDiff ? diff : v
     this.prev_klink = v
     this.push_kflag(isDiff ? 1 : 0)
     this._push_klink(v2, isDiff, this.dcount)
@@ -447,11 +458,17 @@ class Encoder {
       this.dint(v, false)
       return
     }
-
-    let result = this.get_diff(v, this.prev_num)
-    const isDiff = (result & 1) === 1
-    const v2 = Math.floor(result / 2)
-
+    // Inline get_diff: avoids method call + pack/unpack.
+    // Note: prev_num is initialized to 0 (not null), so the null check
+    // from get_diff is unnecessary here.
+    const prev = this.prev_num
+    let diff = v - prev
+    let isDiff
+    if (diff < 0) {
+      diff = -diff + 3
+      isDiff = diff < 7
+    } else isDiff = diff < 4
+    const v2 = isDiff ? diff : v
     this.prev_num = v
     this.dint(v2, isDiff)
   }

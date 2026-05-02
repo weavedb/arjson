@@ -46,10 +46,12 @@ class Builder {
     // structuredClone was a deep copy of all columns, multi-MB on big
     // inputs. Shallow object reference is correct and dramatically cheaper.
     const t = this.table()
-    // Use Sets for arrs/objs (was plain objects keyed by integer i).
-    // Plain-object dictionary keys grew with input size and forced
-    // V8 into dictionary mode (LoadIC_Megamorphic in profile). Set has
-    // no hidden-class dehydration concern.
+    // Sparse "set of small ints" → Uint8Array-backed bitmap. Faster than
+    // Set (which has hash table lookup overhead, ~2.6% in profile) and
+    // faster than plain-object dictionary (which goes megamorphic).
+    // Sized to krefs.length + 2 to cover all possible ci values; build
+    // never indexes beyond that.
+    const arrLen = (t.krefs?.length ?? 0) + 2
     const obj = {
       vrefs: t.vrefs,
       krefs: t.krefs,
@@ -61,8 +63,8 @@ class Builder {
       strs: t.strs,
       strmap: t.strmap,
       strdiffs: t.strdiffs,
-      arrs: new Set(),
-      objs: new Set(),
+      arrs: new Uint8Array(arrLen),
+      objs: new Uint8Array(arrLen),
       nc: 0,
       bc: 0,
       sc: 0,
@@ -75,10 +77,9 @@ class Builder {
     }
 
     let i = 0
-    // init is a 2-bucket Set table — bucket 0 (arrays) and 1 (objects).
-    // Was `[[], []]` (2 sparse arrays), which megamorphosed under V8.
-    // Sets keep predictable shape and use bucket * 1e9 + key as the
-    // composite key (i is a small int; multiplier separates the buckets).
+    // init is a 2-bucket marker table — bucket 0 (arrays) and 1 (objects).
+    // k[1] can be an array index OR a strmap index; max is unknown up
+    // front, so use Set rather than a fixed-size typed array.
     const init0 = new Set()
     const init1 = new Set()
     const type = k => (typeof k[0] === "string" ? 2 : k[0])
@@ -394,12 +395,12 @@ const getKey = (i, keys, obj) => {
     if (typeof k === "undefined") keys.push([null])
     else if (Array.isArray(k)) keys.push([2, k[0], undefined, ci])
     else if (typeof k === "number") {
-      const reset = !obj.arrs.has(ci)
-      if (reset) obj.arrs.add(ci)
+      const reset = obj.arrs[ci] === 0
+      if (reset) obj.arrs[ci] = 1
       keys.push([obj.ktypes[ci - 1][0], k, reset, ci])
     } else {
-      const reset = !obj.objs.has(ci)
-      if (reset) obj.objs.add(ci)
+      const reset = obj.objs[ci] === 0
+      if (reset) obj.objs[ci] = 1
       keys.push([k, undefined, reset, ci])
     }
   }
@@ -409,8 +410,8 @@ const getKey = (i, keys, obj) => {
   for (let i2 = 0; i2 < klen; i2++) {
     const k = keys[i2]
     if (Array.isArray(k) && k[0] === 2) {
-      const reset = !obj.objs.has(i)
-      if (reset) obj.objs.add(i)
+      const reset = obj.objs[i] === 0
+      if (reset) obj.objs[i] = 1
       keys[i2] = [obj.strmap[k[1].toString()], undefined, reset, i]
     }
   }
