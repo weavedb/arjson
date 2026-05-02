@@ -46,14 +46,14 @@ bits are organized into 13 groups (columns), each encoding one aspect of
 the document. The groups appear in a fixed order and are read sequentially:
 
 1. Value count (number of values in the document)
-2. Value flags (1 bit per value: delta-encoded or not)
+2. Value flags (RLE-prefixed, 1 bit per value: delta-encoded or not)
 3. Value links (references from each value to its parent key)
-4. Key flags (1 bit per key: delta-encoded or not)
+4. Key flags (RLE-prefixed, 1 bit per key: delta-encoded or not)
 5. Key links (parent references for keys)
 6. Key types (2 bits per key: array, object, base64 string, generic string)
 7. Keys (the key strings themselves)
 8. Data types (3 bits per value type)
-9. Boolean values (1 bit each)
+9. Boolean values (RLE-prefixed, 1 bit each)
 10. Number values (variable encoding)
 11. String values (variable encoding)
 12. String diffs (for delta-encoded string updates)
@@ -67,6 +67,29 @@ Each group exploits column-specific compression:
   indices on subsequent occurrences.**
 - **Keys with only base64url characters use 6-bit encoding rather than
   full LEB128.**
+- **Boolean-valued columns (`vflags`, `kflags`, `bools`) use a 2-bit
+  RLE mode prefix**: `00` (all zeros, no body), `01` (all ones, no
+  body), `10` (mixed, raw body bits follow), `11` (reserved). For
+  homogeneous columns this collapses N raw bits to 2 prefix bits;
+  for mixed columns it costs 2 bits of overhead.
+
+### Boolean-column RLE prefix (v1.1)
+
+Each non-empty column among `vflags`, `kflags`, `bools` is preceded
+by a 2-bit mode selector:
+
+```
+mode 00 → all zeros (column has expected length but no body bits)
+mode 01 → all ones  (column has expected length but no body bits)
+mode 10 → mixed     (column body is raw <expected length> bits)
+mode 11 → reserved
+```
+
+When the column is empty (length 0), no prefix is emitted — the
+adjacent columns abut directly. The expected length is determined
+from the document structure already parsed (value count for
+`vflags`, key chain length for `kflags`, count of boolean-typed
+values for `bools`).
 
 The detailed bit layout for each group is in
 `sdk/src/encoder.js` (encode side) and `sdk/src/decoder.js` (decode side).
