@@ -1,5 +1,4 @@
 import { strmap_rev, base64_rev, bits } from "./utils.js"
-import { includes, flatten } from "ramda"
 import { Builder } from "./builder.js"
 
 class Decoder {
@@ -9,21 +8,31 @@ class Decoder {
   }
 
   n(len) {
+    const c = this.c
+    const o = this.o
+    const byteIdx = c >>> 3
+    const bitOff = c & 7
+    this.c = c + len
+    if (this.c > o.length * 8 + 64) {
+      throw new Error("ARJSON decoder: read past end of buffer")
+    }
+    // Fast path: any read of ≤ 24 bits fits in a 32-bit window over up to
+    // 4 bytes. Out-of-range bytes coerce to undefined → 0 (zero-extend),
+    // matching the bit-by-bit fallback's behavior past the buffer end.
+    if (len <= 24) {
+      const w =
+        ((o[byteIdx] << 24) |
+          ((o[byteIdx + 1] | 0) << 16) |
+          ((o[byteIdx + 2] | 0) << 8) |
+          (o[byteIdx + 3] | 0)) >>> 0
+      return (w >>> (32 - bitOff - len)) & ((1 << len) - 1)
+    }
+    // Slow path: > 24 bits, reassemble bit-by-bit.
     let result = 0
     for (let i = 0; i < len; i++) {
-      const bitPos = this.c + i
-      const byteIndex = bitPos >> 3
-      const bitIndex = 7 - (bitPos & 7)
-      const bit = (this.o[byteIndex] >> bitIndex) & 1
+      const bitPos = c + i
+      const bit = (o[bitPos >> 3] >> (7 - (bitPos & 7))) & 1
       result = (result << 1) | bit
-    }
-    this.c += len
-    // Trip-wire: detect runaway over-read on malformed input. Legitimate
-    // decoding may zero-extend a few bits past the end during boundary
-    // alignment, but advancing far past the buffer means we're in an
-    // unbounded loop reading implicit zeros.
-    if (this.c > this.o.length * 8 + 64) {
-      throw new Error("ARJSON decoder: read past end of buffer")
     }
     return result
   }
@@ -106,24 +115,40 @@ class Decoder {
   buildStrMap() {
     const plus = this.initial_count
     const plus2 = this.initial_count ? 0 : 1
-    let seen = {}
-    const keys = (i, arr = []) => {
-      const k = this.krefs[i]
-      if (typeof k === "undefined" || seen[i]) return
-      else {
-        seen[i] = true
-        arr.unshift({ t: "k", i })
-        return keys(k - (2 + plus), arr)
+    const offset = 2 + plus
+    const krefs = this.krefs
+    const seen = new Uint8Array(krefs.length)
+    const vrefs = this.vrefs
+    const vlen = vrefs.length
+
+    // Walk each vref's chain of krefs. Inline traversal avoids the closure,
+    // unshift, ramda flatten, and intermediate { t, i } object allocation.
+    // The flat output is stored as parallel arrays: kinds (0=v, 1=k) and
+    // indices, so we don't allocate {t,i} per node.
+    const kinds = []
+    const indices = []
+    // Local stack for the krefs chain (so we can reverse them in-place
+    // without unshift's O(n²)).
+    const stack = []
+    for (let i = 0; i < vlen; i++) {
+      let kIdx = vrefs[i] - offset
+      stack.length = 0
+      while (kIdx >= 0 && kIdx < krefs.length && !seen[kIdx]) {
+        const k = krefs[kIdx]
+        if (k === undefined) break
+        seen[kIdx] = 1
+        stack.push(kIdx)
+        kIdx = k - offset
       }
+      // emit reversed (root-to-leaf) krefs first, then the v
+      for (let j = stack.length - 1; j >= 0; j--) {
+        kinds.push(1)
+        indices.push(stack[j])
+      }
+      kinds.push(0)
+      indices.push(i)
     }
-    let _arr = []
-    let i = 0
-    for (const v of this.vrefs) {
-      let arr = [{ t: "v", i }]
-      keys(v - (2 + plus), arr)
-      _arr.push(arr)
-      i++
-    }
+
     const toMap = kv => {
       if (typeof kv === "string") {
         if (typeof this.str_rev[kv] === "undefined") {
@@ -134,9 +159,13 @@ class Decoder {
     }
 
     let str = 0
-    for (const v of flatten(_arr)) {
-      if (v.t === "k") toMap(this.keys[v.i + plus2])
-      else if (includes(this.vtypes[v.i], [2, 7])) toMap(this.strs[str++])
+    const flatLen = kinds.length
+    for (let n = 0; n < flatLen; n++) {
+      if (kinds[n] === 1) toMap(this.keys[indices[n] + plus2])
+      else {
+        const t = this.vtypes[indices[n]]
+        if (t === 2 || t === 7) toMap(this.strs[str++])
+      }
     }
   }
   getStrDiffs() {

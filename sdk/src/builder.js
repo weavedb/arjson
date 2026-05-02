@@ -347,30 +347,48 @@ class Builder {
 }
 
 const getKey = (i, keys, obj) => {
-  const k = obj.keys[i - 1]
-  if (typeof k === "undefined") keys.unshift([null])
-  else if (Array.isArray(k)) keys.unshift([2, k[0], undefined, i])
-  else if (typeof k === "number") {
-    let reset = false
-    if (obj.arrs[i] !== true) {
-      reset = true
-      obj.arrs[i] = true
+  // Walk the kref chain leaf-to-root iteratively, then reverse —
+  // avoids unshift's O(n²) per-call cost.
+  const chain = []
+  let cur = i
+  while (true) {
+    chain.push(cur)
+    if (cur > 1) {
+      const d = obj.krefs[cur - 2]
+      if (d > 0) {
+        cur = d
+        continue
+      }
     }
-    keys.unshift([obj.ktypes[i - 1][0], k, reset, i])
-  } else {
-    let reset = false
-    if (obj.objs[i] !== true) {
-      reset = true
-      obj.objs[i] = true
+    break
+  }
+  // Emit in root-to-leaf order.
+  for (let n = chain.length - 1; n >= 0; n--) {
+    const ci = chain[n]
+    const k = obj.keys[ci - 1]
+    if (typeof k === "undefined") keys.push([null])
+    else if (Array.isArray(k)) keys.push([2, k[0], undefined, ci])
+    else if (typeof k === "number") {
+      let reset = false
+      if (obj.arrs[ci] !== true) {
+        reset = true
+        obj.arrs[ci] = true
+      }
+      keys.push([obj.ktypes[ci - 1][0], k, reset, ci])
+    } else {
+      let reset = false
+      if (obj.objs[ci] !== true) {
+        reset = true
+        obj.objs[ci] = true
+      }
+      keys.push([k, undefined, reset, ci])
     }
-    keys.unshift([k, undefined, reset, i])
   }
-  if (i > 1) {
-    const d = obj.krefs[i - 2]
-    if (d > 0) getKey(d, keys, obj)
-  }
-  let i2 = 0
-  for (let k of keys) {
+  // Resolve type-2 (strmap reference) keys to strings, using the leaf
+  // index `i` for the obj.objs marker (preserves prior behavior).
+  const klen = keys.length
+  for (let i2 = 0; i2 < klen; i2++) {
+    const k = keys[i2]
     if (Array.isArray(k) && k[0] === 2) {
       let reset = false
       if (obj.objs[i] !== true) {
@@ -379,7 +397,6 @@ const getKey = (i, keys, obj) => {
       }
       keys[i2] = [obj.strmap[k[1].toString()], undefined, reset, i]
     }
-    i2++
   }
 }
 
