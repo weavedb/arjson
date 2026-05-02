@@ -105,10 +105,33 @@ class Builder {
           }
         }
         if (allFlat) {
+          // Inline the value extraction (was getVal+wrapper-object alloc).
           const out = new Array(_vlen)
+          const _bools = obj.bools
+          const _nums = obj.nums
+          const _strs = obj.strs
+          const _strmap = obj.strmap
+          const _strdiffs = obj.strdiffs
+          let nc = obj.nc, bc = obj.bc, sc = obj.sc
           for (let vi = 0; vi < _vlen; vi++) {
-            out[vi] = getVal(vi, obj).__val__
+            const vt = _vtypes[vi]
+            // nums column has already-negated value for vt=5 (decoder
+            // pushes -num for type 5). vt=4/5/6 all read identically.
+            if (vt === 4 || vt === 5 || vt === 6) out[vi] = _nums[nc++]
+            else if (vt === 7) {
+              let str = _strs[sc++]
+              if (Array.isArray(str)) {
+                if (str[0] === -1) str = _strdiffs[str[1]]
+                else str = _strmap[str[0]]
+              }
+              out[vi] = str
+            }
+            else if (vt === 3) out[vi] = _bools[bc++]
+            else /* vt === 1 */ out[vi] = null
           }
+          obj.nc = nc
+          obj.bc = bc
+          obj.sc = sc
           return out
         }
       }
@@ -139,9 +162,31 @@ class Builder {
         }
         if (allFlat) {
           const out = {}
+          const _bools = obj.bools
+          const _nums = obj.nums
+          const _strs = obj.strs
+          const _strmap = obj.strmap
+          const _strdiffs = obj.strdiffs
+          const _keys = obj.keys
+          let nc = obj.nc, bc = obj.bc, sc = obj.sc
           for (let vi = 0; vi < _vlen; vi++) {
-            out[obj.keys[vi + 1]] = getVal(vi, obj).__val__
+            const vt = _vtypes[vi]
+            const k = _keys[vi + 1]
+            if (vt === 4 || vt === 5 || vt === 6) out[k] = _nums[nc++]
+            else if (vt === 7) {
+              let str = _strs[sc++]
+              if (Array.isArray(str)) {
+                if (str[0] === -1) str = _strdiffs[str[1]]
+                else str = _strmap[str[0]]
+              }
+              out[k] = str
+            }
+            else if (vt === 3) out[k] = _bools[bc++]
+            else /* vt === 1 */ out[k] = null
           }
+          obj.nc = nc
+          obj.bc = bc
+          obj.sc = sc
           return out
         }
       }
