@@ -123,63 +123,63 @@ class Encoder {
   }
 
   add_vlinks(val, vlen) {
-    const maxIdx = (this.vlinks_len >> 5) + Math.ceil(vlen / 32) + 1
+    const maxIdx = (this.vlinks_len >> 5) + ((vlen + 31) >> 5) + 1
     if (maxIdx >= this.vlinks.length) this._grow()
     this.vlinks_len = this._add(this.vlinks, this.vlinks_len, val, vlen)
   }
   add_klinks(val, vlen) {
-    const maxIdx = (this.klinks_len >> 5) + Math.ceil(vlen / 32) + 1
+    const maxIdx = (this.klinks_len >> 5) + ((vlen + 31) >> 5) + 1
     if (maxIdx >= this.klinks.length) this._grow()
     this.klinks_len = this._add(this.klinks, this.klinks_len, val, vlen)
   }
   add_vflags(val, vlen) {
-    const maxIdx = (this.vflags_len >> 5) + Math.ceil(vlen / 32) + 1
+    const maxIdx = (this.vflags_len >> 5) + ((vlen + 31) >> 5) + 1
     if (maxIdx >= this.vflags.length) this._grow()
     this.vflags_len = this._add(this.vflags, this.vflags_len, val, vlen)
   }
   add_kflags(val, vlen) {
-    const maxIdx = (this.kflags_len >> 5) + Math.ceil(vlen / 32) + 1
+    const maxIdx = (this.kflags_len >> 5) + ((vlen + 31) >> 5) + 1
     if (maxIdx >= this.kflags.length) this._grow()
     this.kflags_len = this._add(this.kflags, this.kflags_len, val, vlen)
   }
   add_bools(val, vlen) {
-    const maxIdx = (this.bools_len >> 5) + Math.ceil(vlen / 32) + 1
+    const maxIdx = (this.bools_len >> 5) + ((vlen + 31) >> 5) + 1
     if (maxIdx >= this.bools.length) this._grow()
     this.bools_len = this._add(this.bools, this.bools_len, val, vlen)
   }
   add_keys(val, vlen) {
-    const maxIdx = (this.keys_len >> 5) + Math.ceil(vlen / 32) + 1
+    const maxIdx = (this.keys_len >> 5) + ((vlen + 31) >> 5) + 1
     if (maxIdx >= this.keys.length) this._grow()
     this.keys_len = this._add(this.keys, this.keys_len, val, vlen)
   }
   add_types(val, vlen) {
-    const maxIdx = (this.types_len >> 5) + Math.ceil(vlen / 32) + 1
+    const maxIdx = (this.types_len >> 5) + ((vlen + 31) >> 5) + 1
     if (maxIdx >= this.types.length) this._grow()
     this.types_len = this._add(this.types, this.types_len, val, vlen)
   }
   add_nums(val, vlen) {
-    const maxIdx = (this.nums_len >> 5) + Math.ceil(vlen / 32) + 1
+    const maxIdx = (this.nums_len >> 5) + ((vlen + 31) >> 5) + 1
     if (maxIdx >= this.nums.length) this._grow()
     this.nums_len = this._add(this.nums, this.nums_len, val, vlen)
   }
   add_dc(val, vlen) {
-    const maxIdx = (this.dc_len >> 5) + Math.ceil(vlen / 32) + 1
+    const maxIdx = (this.dc_len >> 5) + ((vlen + 31) >> 5) + 1
     if (maxIdx >= this.dc.length) this._grow()
     this.dc_len = this._add(this.dc, this.dc_len, val, vlen)
   }
   add_kvals(val, vlen) {
-    const maxIdx = (this.kvals_len >> 5) + Math.ceil(vlen / 32) + 1
+    const maxIdx = (this.kvals_len >> 5) + ((vlen + 31) >> 5) + 1
     if (maxIdx >= this.kvals.length) this._grow()
     this.kvals_len = this._add(this.kvals, this.kvals_len, val, vlen)
   }
   add_vals(val, vlen) {
-    const maxIdx = (this.vals_len >> 5) + Math.ceil(vlen / 32) + 1
+    const maxIdx = (this.vals_len >> 5) + ((vlen + 31) >> 5) + 1
     if (maxIdx >= this.vals.length) this._grow()
     this.vals_len = this._add(this.vals, this.vals_len, val, vlen)
   }
 
   add_strdiffs(val, vlen) {
-    const maxIdx = (this.strdiffs_len >> 5) + Math.ceil(vlen / 32) + 1
+    const maxIdx = (this.strdiffs_len >> 5) + ((vlen + 31) >> 5) + 1
     if (maxIdx >= this.strdiffs.length) this._grow()
     this.strdiffs_len = this._add(this.strdiffs, this.strdiffs_len, val, vlen)
   }
@@ -191,31 +191,14 @@ class Encoder {
   }
 
   _add(tar, len, val, vlen) {
+    // Caller (add_vflags etc.) is responsible for ensuring tar is large
+    // enough by calling _grow when needed. The previous in-loop grow +
+    // polymorphic re-bind chain was redundant overhead.
     if (vlen >= 32) val = val >>> 0
     else val &= (1 << vlen) - 1
     const used = len & 31
     const free = used === 0 ? 32 : 32 - used
     const idx = len >> 5
-    let maxIdx = idx + 1
-    if (vlen > free) {
-      const remaining = vlen - free
-      maxIdx = idx + 1 + Math.ceil(remaining / 32)
-    }
-    while (maxIdx >= tar.length) {
-      this._grow()
-      if (tar === this.vlinks) tar = this.vlinks
-      else if (tar === this.klinks) tar = this.klinks
-      else if (tar === this.vflags) tar = this.vflags
-      else if (tar === this.kflags) tar = this.kflags
-      else if (tar === this.bools) tar = this.bools
-      else if (tar === this.keys) tar = this.keys
-      else if (tar === this.types) tar = this.types
-      else if (tar === this.nums) tar = this.nums
-      else if (tar === this.dc) tar = this.dc
-      else if (tar === this.kvals) tar = this.kvals
-      else if (tar === this.vals) tar = this.vals
-      else if (tar === this.strdiffs) tar = this.strdiffs
-    }
 
     if (vlen <= free) {
       if (used === 0) tar[idx] = val
