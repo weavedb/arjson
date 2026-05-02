@@ -971,7 +971,31 @@ function pushPathStr(u, v2, prev = null, diff = null) {
     u.add_keys(ktype, 2)
     u.push_keylen(len + 1)
     if (is64) {
-      for (let i = 0; i < len; i++) u.add_kvals(base64_byte[v2.charCodeAt(i)], 6)
+      // Inline add_kvals(c, 6) in the inner per-char loop. Each
+      // 6-bit write fits within at most 2 words; precompute the
+      // grow margin once.
+      const need = ((len * 6 + 31) >> 5) + (u.kvals_len >> 5) + 1
+      while (need >= u.kvals.length) u._grow()
+      let kvlen = u.kvals_len
+      const kvals = u.kvals
+      for (let i = 0; i < len; i++) {
+        const val = base64_byte[v2.charCodeAt(i)]
+        const used = kvlen & 31
+        const free = 32 - used
+        const idx = kvlen >>> 5
+        if (free >= 6) {
+          if (used === 0) kvals[idx] = val
+          else kvals[idx] = ((kvals[idx] << 6) | val) >>> 0
+        } else {
+          // Split across word boundary
+          const high = val >>> (6 - free)
+          if (used === 0) kvals[idx] = high
+          else kvals[idx] = ((kvals[idx] << free) | high) >>> 0
+          kvals[idx + 1] = val & ((1 << (6 - free)) - 1)
+        }
+        kvlen += 6
+      }
+      u.kvals_len = kvlen
     } else {
       for (let i = 0; i < len; i++) u.leb128_2_kvals(v2.charCodeAt(i))
     }
@@ -1217,7 +1241,12 @@ function _encode(
     } else {
       pushPathNum(u, prev, 1, index)
       const __prev = u.dcount
-      for (const k in v) {
+      // Object.keys + index loop is faster than for-in for POJOs
+      // (no inherited-property enumeration, no iterator protocol).
+      const keys = Object.keys(v)
+      const klen = keys.length
+      for (let ki = 0; ki < klen; ki++) {
+        const k = keys[ki]
         const _prev = u.dcount
         pushPathStr(u, k, __prev - 1)
         prev_type = _encode(v[k], u, _prev, prev_type)
