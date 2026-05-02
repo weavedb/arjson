@@ -167,41 +167,44 @@ describe("golden: encoded sizes for canonical inputs", () => {
 })
 
 describe("golden: encoded sizes for compressible patterns", () => {
-  it("array of 100 sequential ints → 22 bytes", () => {
+  // v1.1: vflags/kflags/bools columns now use a 2-bit RLE prefix.
+  // For homogeneous columns (all-zero or all-one), the prefix replaces
+  // the entire raw bit body, yielding large size wins on these patterns.
+  it("array of 100 sequential ints → 10 bytes", () => {
     const a = []
     for (let i = 0; i < 100; i++) a.push(i)
-    assert.equal(enc(a).length, 22)
+    assert.equal(enc(a).length, 10)
   })
 
-  it("array of 100 identical strings → 137 bytes", () => {
+  it("array of 100 identical strings → 125 bytes", () => {
     const a = []
     for (let i = 0; i < 100; i++) a.push("repeated")
-    assert.equal(enc(a).length, 137)
+    assert.equal(enc(a).length, 125)
   })
 
-  it("array of 100 nulls → 19 bytes", () => {
+  it("array of 100 nulls → 7 bytes", () => {
     const a = []
     for (let i = 0; i < 100; i++) a.push(null)
+    assert.equal(enc(a).length, 7)
+  })
+
+  it("array of 100 alternating booleans → 19 bytes", () => {
+    const a = []
+    for (let i = 0; i < 100; i++) a.push(i % 2 === 0)
     assert.equal(enc(a).length, 19)
   })
 
-  it("array of 100 alternating booleans → 31 bytes", () => {
-    const a = []
-    for (let i = 0; i < 100; i++) a.push(i % 2 === 0)
-    assert.equal(enc(a).length, 31)
-  })
-
-  it("50 identical user records → 770 bytes", () => {
+  it("50 identical user records → 740 bytes", () => {
     const a = []
     for (let i = 0; i < 50; i++)
       a.push({ id: i, name: "Alice", role: "admin", active: true })
-    assert.equal(enc(a).length, 770)
+    assert.equal(enc(a).length, 740)
   })
 
-  it("array of 1000 sequential ints → 139 bytes", () => {
+  it("array of 1000 sequential ints → 14 bytes", () => {
     const a = []
     for (let i = 0; i < 1000; i++) a.push(i)
-    assert.equal(enc(a).length, 139)
+    assert.equal(enc(a).length, 14)
   })
 })
 
