@@ -136,6 +136,85 @@ class Builder {
         }
       }
 
+      // ── Try array-of-flat-objects path ──────────────────────────
+      // Pattern: root is array, each element is an object whose values
+      // are primitives (depth-3 chain: leaf → key → obj → root).
+      // Covers redundant_users, time_series_100, arr_obj_100_homog.
+      if (rootKt && rootKt[0] === 0 && (obj.krefs[root - 2] | 0) === 0) {
+        const _krefs = obj.krefs
+        const _ktypes = obj.ktypes
+        const _keys = obj.keys
+        let isAoO = true
+        // Each leaf vref must resolve to a chain of: key → obj → root
+        // where obj's parent is root, and obj's ktype is [1].
+        for (let vi = 0; vi < _vlen; vi++) {
+          const keyKr = _vrefs[vi]
+          if (keyKr < 1) { isAoO = false; break }
+          const objKr = _krefs[keyKr - 2]
+          if (objKr === undefined || objKr < 1 || objKr === root) {
+            isAoO = false; break
+          }
+          const objParent = _krefs[objKr - 2] | 0
+          if (objParent !== root) { isAoO = false; break }
+          // Object's ktype must be [1] (object marker).
+          const objKt = _ktypes[objKr - 1]
+          if (!objKt || objKt[0] !== 1) { isAoO = false; break }
+          // Key's ktype must be 2 (string).
+          const keyKt = _ktypes[keyKr - 1]
+          if (!keyKt || keyKt[0] !== 2) { isAoO = false; break }
+          const vt = _vtypes[vi]
+          if (vt !== 1 && vt !== 3 && vt !== 4 && vt !== 5 && vt !== 7) {
+            isAoO = false; break
+          }
+        }
+        if (isAoO) {
+          const _bools = obj.bools
+          const _nums = obj.nums
+          const _strs = obj.strs
+          const _strmap = obj.strmap
+          const _strdiffs = obj.strdiffs
+          let nc = obj.nc, bc = obj.bc, sc = obj.sc
+          // Map obj kref → object index in result (allocated in encounter order).
+          const objIndex = {}
+          let nextIdx = 0
+          // Pre-pass: assign indices in vref-order. Inner objects are
+          // typically encountered in array order, but the structural check
+          // doesn't enforce that — discover via the index map.
+          const out = []
+          for (let vi = 0; vi < _vlen; vi++) {
+            const keyKr = _vrefs[vi]
+            const objKr = _krefs[keyKr - 2]
+            let oi = objIndex[objKr]
+            if (oi === undefined) {
+              oi = nextIdx++
+              objIndex[objKr] = oi
+              out[oi] = {}
+            }
+            // Resolve key: keys[keyKr - 1] is string OR [strmap_idx].
+            const k = _keys[keyKr - 1]
+            const kStr = typeof k === "string" ? k : _strmap[k[0]]
+            const vt = _vtypes[vi]
+            let val
+            if (vt === 4 || vt === 5 || vt === 6) val = _nums[nc++]
+            else if (vt === 7) {
+              let str = _strs[sc++]
+              if (Array.isArray(str)) {
+                if (str[0] === -1) str = _strdiffs[str[1]]
+                else str = _strmap[str[0]]
+              }
+              val = str
+            }
+            else if (vt === 3) val = _bools[bc++]
+            else val = null
+            out[oi][kStr] = val
+          }
+          obj.nc = nc
+          obj.bc = bc
+          obj.sc = sc
+          return out
+        }
+      }
+
       // ── Try flat object path ───────────────────────────────────
       // Object root: ktypes[0] = [1]. Keys are string-typed (ktype 2).
       // krefs all point to root. vrefs sequential pointing to each key.
