@@ -16,17 +16,15 @@ class Builder {
     }
   }
 
-  constructor({
-    ktypes,
-    keys,
-    vtypes,
-    bools,
-    nums,
-    strs,
-    vrefs,
-    krefs,
-    strmap,
-    strdiffs,
+  constructor(table) {
+    if (table) this.setTable(table)
+  }
+
+  // Reusable Builder: setTable(table) updates fields in place so a
+  // single Builder instance can be reused across decode calls. Cuts
+  // per-decode allocation of Builder + its embedded Uint8Array buffers.
+  setTable({
+    ktypes, keys, vtypes, bools, nums, strs, vrefs, krefs, strmap, strdiffs,
   }) {
     this.strmap = strmap
     this.strdiffs = strdiffs
@@ -50,8 +48,18 @@ class Builder {
     // Set (which has hash table lookup overhead, ~2.6% in profile) and
     // faster than plain-object dictionary (which goes megamorphic).
     // Sized to krefs.length + 2 to cover all possible ci values; build
-    // never indexes beyond that.
+    // never indexes beyond that. Reuse instance-level buffers to avoid
+    // per-call allocation (was 4.2% as CreateTypedArray in profile).
     const arrLen = (t.krefs?.length ?? 0) + 2
+    if (!this._arrs || this._arrs.length < arrLen) {
+      let cap = 16
+      while (cap < arrLen) cap <<= 1
+      this._arrs = new Uint8Array(cap)
+      this._objs = new Uint8Array(cap)
+    } else {
+      this._arrs.fill(0, 0, arrLen)
+      this._objs.fill(0, 0, arrLen)
+    }
     const obj = {
       vrefs: t.vrefs,
       krefs: t.krefs,
@@ -63,8 +71,8 @@ class Builder {
       strs: t.strs,
       strmap: t.strmap,
       strdiffs: t.strdiffs,
-      arrs: new Uint8Array(arrLen),
-      objs: new Uint8Array(arrLen),
+      arrs: this._arrs,
+      objs: this._objs,
       nc: 0,
       bc: 0,
       sc: 0,

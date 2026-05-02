@@ -666,9 +666,12 @@ class Decoder {
   }
 
   build() {
-    const builder = new Builder(this.table())
-    this.json = builder.build()
-    const artable = builder.table()
+    // Shared Builder instance — avoids per-decode allocation of
+    // Builder + the Uint8Array buffers it owns for arrs/objs.
+    if (!this._builder) this._builder = new Builder(this.table())
+    else this._builder.setTable(this.table())
+    this.json = this._builder.build()
+    const artable = this._builder.table()
     for (let k in artable) this[k] = artable[k]
     if (this.c % 8 !== 0) this.c += 8 - (this.c % 8)
     return this.json
