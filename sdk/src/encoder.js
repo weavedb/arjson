@@ -916,23 +916,24 @@ function pushPathStr(u, v2, prev = null, diff = null) {
   } else {
     u.strMap.set(v2, u.str_len++)
     const len = v2.length
-    let ktype = 3
-    let codes = []
-    let codes2 = []
-    if (len !== 0) {
-      let is64 = true
-      for (let i = 0; i < len; i++) {
-        codes2.push(v2.charCodeAt(i))
-        const c = base64[v2[i]]
-        if (typeof c === "undefined") is64 = false
-        else codes.push(c)
+    // Single-pass scan: charCodeAt + base64_byte lookup. Drops the
+    // dual codes/codes2 arrays and the for-of iterators.
+    let is64 = len !== 0
+    for (let i = 0; i < len; i++) {
+      const c = v2.charCodeAt(i)
+      if (c >= 128 || base64_byte[c] === 0xff) {
+        is64 = false
+        break
       }
-      if (is64) ktype = 2
     }
+    const ktype = is64 ? 2 : 3
     u.add_keys(ktype, 2)
     u.push_keylen(len + 1)
-    if (ktype === 3) for (let v of codes2) u.leb128_2_kvals(v)
-    else for (let v of codes) u.add_kvals(v, 6)
+    if (is64) {
+      for (let i = 0; i < len; i++) u.add_kvals(base64_byte[v2.charCodeAt(i)], 6)
+    } else {
+      for (let i = 0; i < len; i++) u.leb128_2_kvals(v2.charCodeAt(i))
+    }
   }
   u.dcount++
 }
