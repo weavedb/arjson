@@ -49,109 +49,169 @@ class ARTable {
     this.compactStrMap()
     this.buildMap()
   }
+  // ── compact() — apply delta table t2 onto base table t1 ────────────────
+  //
+  // The delta semantics: vtypes in t2 may carry deletion markers
+  // (vtype === 0 or vtype[0] === 3) that should remove corresponding
+  // entries in t1. Plain values in t2 are concatenated. Cascading
+  // deletions propagate up the kref chain when an entire subtree is
+  // dropped.
+  //
+  // Implementation is split into 5 helpers (was a 100-line god function):
+  //   1. _buildParentMap  — for each vref in t1, map kref index → ancestor set
+  //   2. _buildValueStats — for each vref index, stash (column, position, val)
+  //   3. _markRemovals    — find deletions in t2 and t1, propagate cascades
+  //   4. _filterColumns   — drop removed entries from t1 columns
+  //   5. _mergeTables     — concat/merge t2 into t1 (then assign to this)
+  //
+  // The ordering matters: stats must be computed before removals (to know
+  // which column slot to remove); removals must be marked before filtering;
+  // filtering must happen before merging (otherwise concat appends to the
+  // pre-removal column).
   compact(t1, t2) {
-    const stats = {}
-    let i = 0
-    let nc = 0
-    let sc = 0
-    let bc = 0
+    const pmap = this._buildParentMap(t1)
+    const { stats, imap } = this._buildValueStats(t1)
+    const removal = this._markRemovals(t1, t2, pmap, imap, stats)
+    this._filterColumns(t1, removal)
+    this._mergeTables(t1, t2)
+    this.compactKeys()
+  }
+
+  _buildParentMap(t1) {
+    // For each vref v in t1: pmap[v] = {
+    //   indexes: { vrefIndex → true } — every vrefs[i] === v
+    //   arr:     [{ i: kref_idx, v: parent }] — chain from v up to root
+    //   vs:      { kref_idx → true } — set view of arr's i values
+    // }
     const pmap = {}
-    const getP = (t1, v, arr) => {
+    const walkUp = (v, arr) => {
       arr.push({ i: v - 2, v: t1.krefs[v - 2] ?? null })
-      if (t1.krefs[v - 2]) getP(t1, t1.krefs[v - 2], arr)
+      if (t1.krefs[v - 2]) walkUp(t1.krefs[v - 2], arr)
     }
-    let i3 = 0
+    let vi = 0
     for (const v of t1.vrefs) {
       if (!pmap[v]) {
-        pmap[v] = { indexes: {} }
-        let arr = []
-        getP(t1, v, arr)
-        pmap[v].arr = arr
+        const arr = []
+        walkUp(v, arr)
+        pmap[v] = { indexes: {}, arr }
       }
-      pmap[v].indexes[i3] = true
-      i3++
+      pmap[v].indexes[vi] = true
+      vi++
     }
-    for (let k in pmap) {
+    for (const k in pmap) {
       pmap[k].vs = {}
-      for (let v of pmap[k].arr) pmap[k].vs[v.i] = true
+      for (const v of pmap[k].arr) pmap[k].vs[v.i] = true
     }
+    return pmap
+  }
+
+  _buildValueStats(t1) {
+    // For each vref index i, compute which column slot stores its value.
+    //   stats[i] = { vtype: "nums"|"strs"|"bools"|"delete", i: slot, val }
+    // Also returns imap: { vref → [vrefIndex] } for cascade removal.
+    const stats = {}
     const imap = {}
+    let nc = 0, sc = 0, bc = 0
+    let i = 0
     for (const v of t1.vrefs) {
       imap[v] ??= []
       imap[v].push(i)
       const vtype = t1.vtypes[i]
       if (typeof vtype === "number") {
-        if (includes(vtype, [4, 5, 6]))
+        if (vtype === 4 || vtype === 5 || vtype === 6) {
           stats[i] = { vtype: "nums", i: nc, val: t1.nums[nc++] }
-        else if (includes(vtype, [2, 7]))
+        } else if (vtype === 2 || vtype === 7) {
           stats[i] = { vtype: "strs", i: sc, val: t1.strs[sc++] }
-        else if (vtype === 3)
+        } else if (vtype === 3) {
           stats[i] = { vtype: "bools", i: bc, val: t1.bools[bc++] }
-        else if (vtype === 0) {
+        } else if (vtype === 0) {
           stats[i] = { vtype: "delete" }
         }
       } else if (Array.isArray(vtype)) {
         if (vtype[0] === 3) {
           stats[i] = { vtype: "delete" }
         } else if (vtype[0] === 2) {
-          if (includes(vtype[3], [4, 5, 6]))
+          const inner = vtype[3]
+          if (inner === 4 || inner === 5 || inner === 6) {
             stats[i] = { vtype: "nums", i: nc, val: t1.nums[nc++] }
-          else if (includes(vtype[3], [2, 7]))
+          } else if (inner === 2 || inner === 7) {
             stats[i] = { vtype: "strs", i: sc, val: t1.strs[sc++] }
-          else if (vtype[3] === 3)
+          } else if (inner === 3) {
             stats[i] = { vtype: "bools", i: bc, val: t1.bools[bc++] }
-        }
-      }
-      i++
-    }
-
-    const removal = { vrefs: {}, vtypes: {} }
-    let removed = {}
-    const remove = i2 => {
-      removal.vrefs[i2] = true
-      removal.vtypes[i2] = true
-      if (stats[i2] && stats[i2].vtype !== "delete") {
-        removal[stats[i2].vtype] ??= {}
-        removal[stats[i2].vtype][stats[i2].i] = true
-      }
-      removed[i2] = true
-    }
-    i = 0
-    for (const v of t2.vrefs) {
-      const _imap = imap[v] ?? []
-      if (t2.vtypes[i] === 0) for (const i2 of _imap) remove(i2)
-      i++
-    }
-    let i2 = 0
-
-    for (const v of t1.vtypes) {
-      if (v === 0) {
-        remove(i2)
-        const ki = t1.vrefs[i2] - 2
-        for (let k in pmap) {
-          if (pmap[k].vs[ki]) {
-            for (let k2 in pmap[k].indexes) if (removed[k2] !== true) remove(k2)
           }
         }
       }
-      i2++
+      i++
     }
-    for (let k in removal) {
-      let arr = []
-      let i = 0
-      if (t1[k]) {
-        for (let v of t1[k]) {
-          if (!removal[k][i]) arr.push(v)
-          i++
-        }
-        t1[k] = arr
+    return { stats, imap }
+  }
+
+  _markRemovals(t1, t2, pmap, imap, stats) {
+    // First pass (t2 deletions): vtype === 0 in t2 means "delete the t1
+    // entries that share my vref."
+    // Second pass (t1 cascade): vtype === 0 in t1 means "remove this and
+    // every other index whose chain shares my kref ancestor."
+    const removal = { vrefs: {}, vtypes: {} }
+    const removed = {}
+    const remove = i2 => {
+      removal.vrefs[i2] = true
+      removal.vtypes[i2] = true
+      const s = stats[i2]
+      if (s && s.vtype !== "delete") {
+        removal[s.vtype] ??= {}
+        removal[s.vtype][s.i] = true
       }
+      removed[i2] = true
     }
+    let i = 0
+    for (const v of t2.vrefs) {
+      if (t2.vtypes[i] === 0) {
+        const targets = imap[v] ?? []
+        for (const i2 of targets) remove(i2)
+      }
+      i++
+    }
+    let j = 0
+    for (const v of t1.vtypes) {
+      if (v === 0) {
+        remove(j)
+        const ki = t1.vrefs[j] - 2
+        // Cascade: any vref whose chain contains ki gets removed too.
+        for (const k in pmap) {
+          if (pmap[k].vs[ki]) {
+            for (const k2 in pmap[k].indexes) {
+              if (removed[k2] !== true) remove(k2)
+            }
+          }
+        }
+      }
+      j++
+    }
+    return removal
+  }
+
+  _filterColumns(t1, removal) {
+    // Drop entries from t1.{vrefs, vtypes, nums, strs, bools} where
+    // removal.X[i] === true.
+    for (const k in removal) {
+      if (!t1[k]) continue
+      const arr = []
+      let i = 0
+      for (const v of t1[k]) {
+        if (!removal[k][i]) arr.push(v)
+        i++
+      }
+      t1[k] = arr
+    }
+  }
+
+  _mergeTables(t1, t2) {
+    // Array fields: concat (t1 first, then t2). Object fields: shallow
+    // merge with t2's keys taking precedence over t1.
     for (const v in t2) {
       if (Array.isArray(t2[v])) this[v] = t1[v].concat(t2[v])
       else this[v] = mergeLeft(t2[v], t1[v])
     }
-    this.compactKeys()
   }
   compactKeys() {
     let t = this.table()
