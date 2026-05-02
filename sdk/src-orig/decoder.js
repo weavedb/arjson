@@ -441,7 +441,7 @@ class Decoder {
 
   getBools() {
     for (let _v of this.vtypes) {
-      let v = Array.isArray(_v) ? _v[3] : _v
+      let v = Array.isArray(_v) ? _v[2] : _v
       if (v === 3) this.bools.push(this.n(1) === 1)
     }
   }

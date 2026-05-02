@@ -69,24 +69,11 @@ for (const s of str.split("")) {
 }
 
 function getPrecision(v) {
-  if (v === 0) return 0
   const s = v.toString()
-  const e = s.indexOf("e")
-  if (e !== -1) {
-    const mantissa = s.slice(0, e)
-    const exp = parseInt(s.slice(e + 1), 10)
-    const dot = mantissa.indexOf(".")
-    const mantissaPrec = dot === -1 ? 0 : mantissa.length - dot - 1
-    return Math.max(0, mantissaPrec - exp)
-  }
   const dot = s.indexOf(".")
   if (dot === -1) return 0
   const frac = s.slice(dot + 1).replace(/0+$/, "")
   return frac.length
-}
-
-function escapeKey(k) {
-  return String(k).replace(/[\\\[\]]/g, "\\$&")
 }
 
 function parsePath(path) {
@@ -95,56 +82,68 @@ function parsePath(path) {
   const result = []
   let currentKey = ""
   let i = 0
+  let inBrackets = false
+  let bracketContent = ""
 
   while (i < path.length) {
     const char = path[i]
 
-    if (char === "\\" && i + 1 < path.length) {
-      const next = path[i + 1]
-      if (next === "[" || next === "]" || next === "\\") {
-        currentKey += next
-        i += 2
-        continue
-      }
-    }
-
-    if (char === ".") {
-      if (currentKey) {
-        result.push(currentKey)
-        currentKey = ""
-      }
-      i++
-      continue
-    }
-
-    if (char === "[") {
-      let j = i + 1
-      let content = ""
-      while (j < path.length && path[j] !== "]") {
-        content += path[j]
-        j++
-      }
-
-      if (j < path.length && path[j] === "]" && /^\d+$/.test(content)) {
+    if (!inBrackets) {
+      if (char === ".") {
+        // End of a key segment
         if (currentKey) {
           result.push(currentKey)
           currentKey = ""
         }
-        result.push(parseInt(content, 10))
-        i = j + 1
+        i++
         continue
       }
 
+      if (char === "[") {
+        // Check if this is the start of an array index or part of a key name
+        // Look ahead to see if content is purely numeric
+        let j = i + 1
+        let content = ""
+        let foundClosing = false
+
+        while (j < path.length && path[j] !== "]") {
+          content += path[j]
+          j++
+        }
+
+        if (j < path.length && path[j] === "]") {
+          foundClosing = true
+        }
+
+        // Check if content is a valid array index (pure number)
+        if (foundClosing && /^\d+$/.test(content)) {
+          // It's an array index
+          if (currentKey) {
+            result.push(currentKey)
+            currentKey = ""
+          }
+          result.push(parseInt(content, 10))
+          i = j + 1 // Skip past the closing bracket
+          continue
+        } else {
+          // It's part of the key name, treat it as a regular character
+          currentKey += char
+          i++
+          continue
+        }
+      }
+
+      // Regular character, add to current key
       currentKey += char
       i++
-      continue
     }
-
-    currentKey += char
-    i++
   }
 
-  if (currentKey) result.push(currentKey)
+  // Don't forget the last key
+  if (currentKey) {
+    result.push(currentKey)
+  }
+
   return result
 }
 
@@ -237,7 +236,6 @@ function parsePathStrict(path) {
 export {
   parsePath,
   parsePathStrict,
-  escapeKey,
   getPrecision,
   bits,
   tobits,

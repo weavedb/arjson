@@ -933,8 +933,6 @@ function pushPathNum(u, prev = null, keylen, index = null) {
 }
 
 function encode(v, u, query, strmap) {
-  if (typeof v === "number" && v - v !== 0) v = null
-  strmap ??= {}
   u.reset(strmap)
   if (typeof v === "undefined") {
     u.single = false
@@ -948,8 +946,7 @@ function encode(v, u, query, strmap) {
     else if (v === false) u.add_dc(2, 7)
     else if (v === "") u.add_dc(3, 7)
     else if (typeof v === "number") {
-      const isInt = (v | 0) === v || Number.isInteger(v)
-      const moved = isInt ? 0 : Math.min(getPrecision(v), 308)
+      const moved = v % 1 === v ? 0 : getPrecision(v)
       const type = moved === 0 ? (v < 0 ? 5 : 4) : v < 0 ? 7 : 6
       if (type === 4) {
         u.add_dc(1, 1)
@@ -958,15 +955,11 @@ function encode(v, u, query, strmap) {
           u.add_dc(63, 6)
           u.leb128_2_dc(v - 63)
         }
-      } else if (type === 5) {
-        u.add_dc(0, 1)
-        u.add_dc(type + 1, 6)
-        u.uint_dc(-v)
       } else {
         u.add_dc(0, 1)
         u.add_dc(type + 1, 6)
-        u.uint_dc(moved)
-        u.uint_dc(Math.round((v < 0 ? -v : v) * Math.pow(10, moved)))
+        if (moved > 0) u.uint_dc(moved)
+        u.uint_dc((v < 0 ? -1 : 1) * v * Math.pow(10, moved))
       }
     } else if (typeof v === "string") {
       u.add_dc(0, 1)
@@ -1023,7 +1016,6 @@ function _encode(
   strmap,
   diff,
 ) {
-  if (typeof v === "number" && v - v !== 0) v = null
   if (typeof v === "undefined") {
     if (prev !== null) u.push_vlink(prev + 1)
     if (
@@ -1035,22 +1027,19 @@ function _encode(
     return [0, index, push]
   } else if (typeof v === "number") {
     if (prev !== null) u.push_vlink(prev + 1)
-    const isInt = (v | 0) === v || Number.isInteger(v)
-    const moved = isInt ? 0 : Math.min(getPrecision(v), 308)
+    const moved = v % 1 === v ? 0 : getPrecision(v)
     const type = moved === 0 ? (v < 0 ? 5 : 4) : 6
     if (
       prev_type !== null &&
-      (prev_type[1] !== null || prev_type[2] !== null || prev_type[0] !== type)
+      (prev_type[1] !== null || prev_type[2] !== null || prev_type[0] !== 4)
     ) {
       u.push_type(prev_type)
     } else u.tcount++
-    if (moved === 0) {
-      u.push_int(v < 0 ? -v : v)
-    } else {
+    if (moved > 0) {
       u.push_float(v < 0, moved + 1)
       if (moved > 2) u.push_int(moved + 1)
-      u.push_int(Math.round((v < 0 ? -v : v) * Math.pow(10, moved)))
     }
+    u.push_int((v < 0 ? -1 : 1) * v * Math.pow(10, moved))
     return [type, index, push]
   } else if (typeof v === "boolean") {
     if (prev !== null) u.push_vlink(prev + 1)
