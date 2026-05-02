@@ -1,10 +1,56 @@
 import { Encoder, encode } from "./encoder.js"
 import { Decoder } from "./decoder.js"
 import { ARTable } from "./artable.js"
-import { escapeKey } from "./utils.js"
-import { mergeLeft, uniq, keys, is, equals, concat } from "ramda"
+import { escapeKey, parsePath } from "./utils.js"
+import { mergeLeft, uniq, keys, is, equals, concat, clone } from "ramda"
 import fastDiff from "fast-diff"
 import { encodeFastDiff } from "./diff.js"
+
+// ── path helpers for explicit move/copy/test ops ──────────────────────────
+
+const parsePathSafe = path => parsePath(path)
+
+const getByPath = (json, segments) => {
+  let cur = json
+  for (const seg of segments) {
+    if (cur === null || cur === undefined) return undefined
+    cur = cur[seg]
+  }
+  return cur
+}
+
+const setByPath = (json, segments, val) => {
+  if (segments.length === 0) return val
+  let cur = json
+  for (let i = 0; i < segments.length - 1; i++) {
+    const seg = segments[i]
+    const next = segments[i + 1]
+    if (cur[seg] === null || cur[seg] === undefined) {
+      // Auto-create container based on next segment's type:
+      // numeric → array, string → object.
+      cur[seg] = typeof next === "number" ? [] : {}
+    }
+    cur = cur[seg]
+  }
+  cur[segments[segments.length - 1]] = val
+  return json
+}
+
+const deleteByPath = (json, segments) => {
+  if (segments.length === 0) return
+  let cur = json
+  for (let i = 0; i < segments.length - 1; i++) {
+    if (cur === null || cur === undefined) return
+    cur = cur[segments[i]]
+  }
+  if (cur === null || cur === undefined) return
+  const last = segments[segments.length - 1]
+  if (typeof last === "number" && Array.isArray(cur)) {
+    cur.splice(last, 1)
+  } else {
+    delete cur[last]
+  }
+}
 
 // Shared singletons reused across calls to avoid Uint32Array reallocation
 // per call. Both `encode()` and `decode()` reset internal state at entry,
@@ -250,6 +296,60 @@ export class ARJSON {
     }
     return deltas
   }
+
+  // ── Explicit op API ─────────────────────────────────────────────────────
+  //
+  // These methods let callers express RFC 6902 operations directly,
+  // bypassing the diff algorithm. Useful when:
+  //   - You know the exact operation you want and don't need the diff
+  //     pass to discover it (saves CPU)
+  //   - You want optimistic-concurrency check via .test()
+  //
+  // For move/copy, the wire encoding is currently a translation to the
+  // existing primitives. A v2 wire format would emit these as single
+  // ops with from-path + to-path and no value re-emission.
+  move(from, to) {
+    const fromVal = getByPath(this.json, parsePathSafe(from))
+    if (fromVal === undefined) {
+      throw new Error(`ARJSON.move: path ${from} not found`)
+    }
+    const next = clone(this.json)
+    setByPath(next, parsePathSafe(to), fromVal)
+    deleteByPath(next, parsePathSafe(from))
+    return this.update(next)
+  }
+
+  copy(from, to) {
+    const fromVal = getByPath(this.json, parsePathSafe(from))
+    if (fromVal === undefined) {
+      throw new Error(`ARJSON.copy: path ${from} not found`)
+    }
+    const next = clone(this.json)
+    setByPath(next, parsePathSafe(to), fromVal)
+    return this.update(next)
+  }
+
+  // test(path, expected) — JSON Patch RFC 6902 test op. Verifies the
+  // current value at `path` deep-equals `expected`. Throws if mismatch.
+  // Does NOT mutate state and does NOT append to the delta chain. Use
+  // this as an optimistic-concurrency precondition before update():
+  //
+  //   arj.test("user.role", "admin")  // throws if user.role isn't admin
+  //   arj.update({ ...user, lastSeen: Date.now() })
+  //
+  // A future v2 wire format could persist test ops in the chain so
+  // replayers verify preconditions during reconstruction. This v1.1
+  // implementation is synchronous-check-only (chain stays unchanged).
+  test(path, expected) {
+    const actual = getByPath(this.json, parsePathSafe(path))
+    if (!equals(actual, expected)) {
+      throw new Error(
+        `ARJSON.test: path ${path} expected ${JSON.stringify(expected)}, ` +
+        `got ${JSON.stringify(actual)}`,
+      )
+    }
+    return true
+  }
   reanchor(json) {
     const fresh = enc(json)
     const d = new Decoder()
@@ -325,4 +425,53 @@ export class ARJSON {
     }
     return this.cache
   }
+}
+
+// ── json() factory ─────────────────────────────────────────────────────────
+//
+// Documented as the public API in `weavedb/weavedb` (docs/docs/pages/
+// api/arjson.mdx) and used by hb/src/zkjson.js + hb/test/arjson.test.js.
+// Provides a thin functional wrapper over the ARJSON class:
+//
+//   json(initJson)           → fresh ARJSON from JSON
+//   json(buffer)             → ARJSON from a serialized chain (Uint8Array)
+//   json(deltasArray)        → ARJSON from an array of delta Uint8Arrays
+//   json(table)              → ARJSON from a saved ARTable cache
+//   json(null, initJson, n)  → fresh from initJson (n is optional pre-size hint)
+//   json(null, null, n)      → empty ARJSON ready for first update
+//
+// The returned object exposes `.json`, `.deltas`, `.update`, `.move`,
+// `.copy`, `.test`, `.toBuffer`, plus `.deltas()` as a function form
+// (for callers that prefer `arj.deltas()` over `arj.deltas`).
+export function json(initOrDeltas, info, n) {
+  let arj
+  if (Array.isArray(initOrDeltas)) {
+    // Array of Uint8Array deltas → reconstruct chain.
+    const buf = ARJSON.toBuffer(initOrDeltas)
+    arj = new ARJSON({ arj: buf })
+  } else if (initOrDeltas instanceof Uint8Array) {
+    arj = new ARJSON({ arj: initOrDeltas })
+  } else if (initOrDeltas !== null && typeof initOrDeltas === "object") {
+    // Treat as either ARTable cache or initial JSON. Heuristic: ARTable
+    // has the column fields (vrefs, krefs, ktypes, etc.). Otherwise
+    // it's just a JSON value.
+    if ("vrefs" in initOrDeltas && "krefs" in initOrDeltas) {
+      arj = new ARJSON({ table: initOrDeltas })
+    } else {
+      arj = new ARJSON({ json: initOrDeltas })
+    }
+  } else if (info !== undefined && info !== null) {
+    arj = new ARJSON({ json: info })
+  } else if (initOrDeltas === null) {
+    // Empty start — caller will populate via update().
+    arj = new ARJSON({ json: null })
+  } else {
+    arj = new ARJSON({ json: initOrDeltas })
+  }
+  // Backward-compat shim: weavedb's older code calls `.deltas()` as a
+  // function; the class field is an array. Provide both forms via a
+  // bound function that returns the array.
+  const fnDeltas = () => arj.deltas
+  Object.defineProperty(arj, "_deltasFn", { value: fnDeltas })
+  return arj
 }
