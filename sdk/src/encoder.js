@@ -271,7 +271,17 @@ class Encoder {
     } else isDiff = diff < 4
     const v2 = isDiff ? diff : v
     this.prev_link = v
-    this.push_vflag(isDiff ? 1 : 0)
+    // Inline push_vflag → add_vflags → _add for single-bit write.
+    // Single bit always fits in current word (free >= 1) so no grow
+    // path needed beyond a one-time capacity check.
+    const flag = isDiff ? 1 : 0
+    const vflen = this.vflags_len
+    const vfidx = vflen >>> 5
+    if (vfidx + 1 >= this.vflags.length) this._grow()
+    const vfused = vflen & 31
+    if (vfused === 0) this.vflags[vfidx] = flag
+    else this.vflags[vfidx] = (this.vflags[vfidx] << 1) | flag
+    this.vflags_len = vflen + 1
     this._push_vlink(v2, isDiff, this.dcount)
     this.rcount++
   }
