@@ -1,5 +1,19 @@
 import { decodeFastDiff, applyDecodedOps } from "./diff.js"
 
+// Discriminated-union kinds for the value envelope produced by getVal.
+// Was previously a tagged-union of optional underscore-prefixed flags
+// (__val__, __del__, __merge__, __update__, __index__, __remove__).
+// The new shape is { kind: KIND.X, ...payload } — single discriminator
+// makes consumers (obj_merge, arr_push, builder build) clearer.
+const KIND = {
+  VAL: 1,         // plain value:           { kind, val }
+  DEL: 2,         // plain delete (vtype 0): { kind }
+  SPLICE: 3,      // array splice replace:  { kind, index, remove, val }
+  SPLICE_DEL: 4,  // array splice delete:   { kind, index, remove }
+  MERGE: 5,       // object merge:          { kind, val }
+  UPDATE_DEL: 6,  // delta-update delete:   { kind }
+}
+
 class Builder {
   table() {
     return {
@@ -81,7 +95,7 @@ class Builder {
     let _json = null
     if (obj.vrefs.length === 0) {
       const r = getVal(0, this)
-      return r.__val__
+      return r.val
     }
 
     // Fast paths: flat array of primitives, flat object of primitives.
@@ -307,7 +321,7 @@ class Builder {
         const k = keys[i2]
 
         if (k[0] === null) {
-          _json = val.__val__
+          _json = val.val
           continue
         }
 
@@ -318,7 +332,7 @@ class Builder {
             _json = []
             json = _json
             if (i2 === keys.length - 1) {
-              json[0] = val.__val__
+              json[0] = val.val
               break
             }
 
@@ -406,7 +420,7 @@ class Builder {
             }
           } else if (t1 === 1) {
             if (keys.length === 2) {
-              if (val.__del__) delete json[k2[0]]
+              if (val.kind === KIND.DEL) delete json[k2[0]]
               else obj_merge(json, k2[0], val, obj)
               break
             } else if (keys.length === 3 && t2 === 1) {
@@ -513,18 +527,19 @@ class Builder {
           const ntype = type(k2)
 
           if (ctype === 0 && ntype === 0) {
-            if (typeof val.__push__ === "undefined") {
-              if (!ex(k2) || k2[2] === true) {
-                set(k2)
-                json.push([])
-              }
-              json = json[json.length - 1]
-              arr_push(json, val, obj)
-            } else arr_push(json, val, obj)
-
+            // Note: was guarded by `typeof val.__push__ === "undefined"`
+            // — that flag was never set anywhere, so the alternative
+            // branch was dead. Removed the dead branch, keeping the
+            // setup-then-arr_push path that was always taken.
+            if (!ex(k2) || k2[2] === true) {
+              set(k2)
+              json.push([])
+            }
+            json = json[json.length - 1]
+            arr_push(json, val, obj)
             break
           } else if (ctype === 1 && ntype === 2) {
-            if (val.__del__) delete json[k2[0]]
+            if (val.kind === KIND.DEL) delete json[k2[0]]
             else {
               if (k2[1] === true) for (let kk in json) delete json[kk[0]]
               obj_merge(json, k2[0], val, obj)
@@ -645,76 +660,89 @@ const get = (obj, type) => {
 const getVal = (i, obj) => {
   const type = obj.vtypes[i]
   if (Array.isArray(type)) {
-    const val = { __update__: true }
     if (type[0] === 2) {
-      val.__index__ = type[1]
-      val.__remove__ = type[2]
-      val.__val__ = get(obj, type[3])
-    } else if (type[0] === 3) {
-      val.__index__ = type[1]
-      val.__remove__ = type[2]
-      val.__del__ = true
-    } else if (type[0] === 0) {
-      if (type[1] === 0) val.__del__ = true
-      else if (type[1] === 1) val.__merge__ = true
-      // type[1] outside {0, 1} is unreachable from any valid encode and
-      // would mean a corrupt delta payload. The decoder's size-sanity
-      // guards reject such input before this point; if we somehow get
-      // here, leave val.__update__ true and let the build pass interpret
-      // it as "no-op update" rather than throwing — matches prior
-      // forgiving behavior and keeps decode robust.
-    } else {
-      throw new Error(
-        `ARJSON builder: unhandled vtype shape [${type[0]}, ...]`,
-      )
+      // Array splice replacement at type[1], remove count type[2], with
+      // value of inner type type[3].
+      return {
+        kind: KIND.SPLICE,
+        index: type[1],
+        remove: type[2],
+        val: get(obj, type[3]),
+      }
     }
-    return val
+    if (type[0] === 3) {
+      // Array splice delete at type[1], remove count type[2].
+      return { kind: KIND.SPLICE_DEL, index: type[1], remove: type[2] }
+    }
+    if (type[0] === 0) {
+      if (type[1] === 0) return { kind: KIND.UPDATE_DEL }
+      if (type[1] === 1) return { kind: KIND.MERGE, val: undefined }
+      // type[1] outside {0, 1} is unreachable from any valid encode.
+      // The decoder's size-sanity guards reject corrupt delta payloads
+      // before this point; if we somehow arrive here, fall through to
+      // a no-op MERGE which the build pass interprets benignly.
+      return { kind: KIND.MERGE, val: undefined }
+    }
+    throw new Error(
+      `ARJSON builder: unhandled vtype shape [${type[0]}, ...]`,
+    )
   }
-  if (type === 0) return { __del__: true }
-  return { __val__: get(obj, type) }
+  if (type === 0) return { kind: KIND.DEL }
+  return { kind: KIND.VAL, val: get(obj, type) }
 }
 
 const obj_merge = (json, k, val, obj) => {
-  if (val.__del__) {
+  if (val.kind === KIND.DEL || val.kind === KIND.UPDATE_DEL) {
     delete json[k]
     return
   }
-  if (val.__merge__) {
-    for (let k2 in val.__val__) {
-      if (typeof val.__val__[k2] === "undefined") delete json[k][k2]
-      else json[k][k2] = val.__val__[k2]
+  if (val.kind === KIND.MERGE) {
+    // Merge each property of val.val into json[k]; undefined values delete.
+    for (const k2 in val.val) {
+      if (typeof val.val[k2] === "undefined") delete json[k][k2]
+      else json[k][k2] = val.val[k2]
     }
-  } else if (val.__val__ instanceof Uint8Array) {
-    json[k] = applyDecodedOps(json[k], decodeFastDiff(val.__val__, obj.strmap))
-  } else json[k] = val.__val__
+    return
+  }
+  // KIND.VAL or KIND.SPLICE — the latter shouldn't reach here in practice
+  // (splices target arrays), but if val is a string-diff Uint8Array we
+  // apply the patch; otherwise plain assign.
+  if (val.val instanceof Uint8Array) {
+    json[k] = applyDecodedOps(json[k], decodeFastDiff(val.val, obj.strmap))
+  } else {
+    json[k] = val.val
+  }
 }
 
 const arr_push = (json, val, obj) => {
-  if (
-    val.__update__ ||
-    typeof val.__val__ !== "object" ||
-    val.__val__ === null
-  ) {
-    if (typeof val.__push__ !== "undefined") {
-      json[val.__push__].push(val.__val__)
-    } else if (typeof val.__index__ !== "undefined") {
-      if (val.__del__) json.splice(val.__index__, val.__remove__)
-      else {
-        let _val = val.__val__
-        if (
-          val.__remove__ &&
-          typeof json[val.__index__] === "string" &&
-          val.__val__ instanceof Uint8Array
-        ) {
-          _val = applyDecodedOps(
-            json[val.__index__],
-            decodeFastDiff(val.__val__, obj.strmap),
-          )
-        }
-        json.splice(val.__index__, val.__remove__, _val)
-      }
-    } else json.push(val.__val__)
+  // Skip plain object/array values without an update wrapper — those
+  // are handled separately by the build pass that recursively descends.
+  if (val.kind === KIND.VAL && typeof val.val === "object" && val.val !== null) {
+    return
   }
+  if (val.kind === KIND.SPLICE_DEL) {
+    json.splice(val.index, val.remove)
+    return
+  }
+  if (val.kind === KIND.SPLICE) {
+    let _val = val.val
+    if (
+      val.remove &&
+      typeof json[val.index] === "string" &&
+      val.val instanceof Uint8Array
+    ) {
+      _val = applyDecodedOps(
+        json[val.index],
+        decodeFastDiff(val.val, obj.strmap),
+      )
+    }
+    json.splice(val.index, val.remove, _val)
+    return
+  }
+  if (val.kind === KIND.VAL) {
+    json.push(val.val)
+  }
+  // KIND.DEL / KIND.MERGE / KIND.UPDATE_DEL: no-op in array context.
 }
 
 export { Builder, getKey, getVal }
