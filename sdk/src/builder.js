@@ -29,6 +29,147 @@ const buildEx = (k, init0, init1) =>
     ? k[0] === 0 ? init0.has(k[1]) : init1.has(k[1])
     : false
 
+// Action codes returned by inner-loop dispatch helpers. The outer
+// loop interprets these to decide whether to break out of the inner
+// for, continue to the next iteration, or fall through to the
+// terminal-key dispatch.
+const ACT_CONTINUE = 0
+const ACT_BREAK = 1
+const ACT_FALLTHROUGH = 2
+
+// handleJsonNullInit: when json is null and we're about to descend the
+// first key in the chain, initialize _json and json based on the key's
+// container type. Returns { _json, json, action } so the outer loop can
+// commit the new accumulator + cursor and then continue / break / fall
+// through to terminal-key dispatch.
+const handleJsonNullInit = (k, k2, k2t, val, obj, atTerminal1, isLastKey, type, set) => {
+  const t = type(k)
+  set(k)
+  if (t === 0) {
+    let _json = []
+    let json = _json
+    if (isLastKey) {
+      json[0] = val.val
+      return { _json, json, action: ACT_BREAK }
+    }
+    if (atTerminal1) {
+      if (k2t === 0) {
+        set(k2)
+        json.push([])
+        json = json[json.length - 1]
+        arr_push(json, val, obj)
+        return { _json, json, action: ACT_BREAK }
+      }
+      // i2 === keys.length - 2 with t2 !== 0 falls through to terminal-key dispatch
+      return { _json, json, action: ACT_FALLTHROUGH }
+    }
+    // Not terminal, not terminal-1 — descend into next container.
+    if (k2t === 0) {
+      set(k2)
+      json.push([])
+      json = json[json.length - 1]
+    } else if (k2t === 1) {
+      set(k2)
+      json.push({})
+      json = json[json.length - 1]
+    }
+    return { _json, json, action: ACT_CONTINUE }
+  }
+  // t !== 0 → object-rooted
+  let _json = {}
+  let json = _json
+  if (atTerminal1) {
+    obj_merge(json, k2[0], val, obj)
+    return { _json, json, action: ACT_BREAK }
+  }
+  return { _json, json, action: ACT_CONTINUE }
+}
+
+// handleFirstKey: dispatch for the i2 === 0 case when json is already
+// initialized (i.e. this isn't the first vref of the build). Modifies
+// json based on (t1, t2, keys.length) and returns { json, action }.
+// Note: `k3` (the key 2 positions ahead) was passed in the original
+// inline code but only used to compute an unused `t3` variable. Dropped.
+const handleFirstKey = (json, k, k2, val, obj, keysLen, type, set, ex) => {
+  if (!k2) {
+    arr_push(json, val, obj)
+    return { json, action: ACT_BREAK }
+  }
+  const t1 = type(k)
+  const t2 = type(k2)
+  if (t1 === 0) {
+    if (keysLen === 1) {
+      arr_push(json, val, obj)
+      return { json, action: ACT_BREAK }
+    }
+    if (keysLen === 2) {
+      if (t2 === 0) {
+        if (k2[2] === true) {
+          set(k2)
+          json.push([])
+        }
+        json = json[json.length - 1]
+        arr_push(json, val, obj)
+        return { json, action: ACT_BREAK }
+      }
+      if (!ex(k2) || k2[2] === true) {
+        set(k2)
+        json.push({})
+      }
+      json = json[json.length - 1]
+      arr_push(json, val, obj)
+      return { json, action: ACT_BREAK }
+    }
+    // keysLen >= 3
+    if (t2 === 0) {
+      if (!ex(k2) || k2[2] === true) {
+        set(k2)
+        json.push([])
+      } else if (
+        json.length > 0 &&
+        !Array.isArray(json[json.length - 1])
+      ) {
+        json.push([])
+      }
+      return { json: json[json.length - 1], action: ACT_CONTINUE }
+    }
+    if (t2 === 1) {
+      if (!ex(k2) || k2[2] === true) {
+        set(k2)
+        json.push({})
+      }
+      return { json: json[json.length - 1], action: ACT_CONTINUE }
+    }
+    return { json, action: ACT_CONTINUE }
+  }
+  if (t1 === 1) {
+    if (keysLen === 2) {
+      if (val.kind === KIND.DEL) delete json[k2[0]]
+      else obj_merge(json, k2[0], val, obj)
+      return { json, action: ACT_BREAK }
+    }
+    if (keysLen === 3 && t2 === 1) {
+      if (typeof k2[3] !== "undefined") {
+        const parentPos = obj.krefs[k2[3] - 2]
+        if (parentPos && parentPos > 0) {
+          const parentKey = obj.keys[parentPos - 1]
+          if (typeof parentKey === "string") {
+            if (
+              typeof json[parentKey] !== "object" ||
+              json[parentKey] === null ||
+              Array.isArray(json[parentKey])
+            ) {
+              json[parentKey] = {}
+            }
+            json = json[parentKey]
+          }
+        }
+      }
+    }
+  }
+  return { json, action: ACT_CONTINUE }
+}
+
 // handleMiddleKey: dispatch for build's inner loop when this key is
 // neither the first nor in the terminal/terminal-1 position. Modifies
 // `json` (the current container the build is descending into) and
@@ -478,7 +619,8 @@ class Builder {
       i++
 
       let json = _json
-      for (let i2 = 0; i2 < keys.length; i2++) {
+      const klen = keys.length
+      for (let i2 = 0; i2 < klen; i2++) {
         const k = keys[i2]
 
         if (k[0] === null) {
@@ -487,134 +629,32 @@ class Builder {
         }
 
         if (json === null) {
-          const t = type(k)
-          set(k)
-          if (t === 0) {
-            _json = []
-            json = _json
-            if (i2 === keys.length - 1) {
-              json[0] = val.val
-              break
-            }
-
-            if (i2 === keys.length - 2) {
-              const k2 = keys[i2 + 1]
-              if (type(k2) === 0) {
-                set(k2)
-                json.push([])
-                json = json[json.length - 1]
-                arr_push(json, val, obj)
-                break
-              }
-            } else {
-              const k2 = keys[i2 + 1]
-              const k2t = type(k2)
-              if (k2t === 0) {
-                set(k2)
-                json.push([])
-                json = json[json.length - 1]
-              } else if (k2t === 1) {
-                set(k2)
-                json.push({})
-                json = json[json.length - 1]
-              }
-            }
-          } else {
-            _json = {}
-            json = _json
-            if (i2 === keys.length - 2) {
-              const k2 = keys[i2 + 1]
-              obj_merge(json, k2[0], val, obj)
-              break
-            }
-          }
-          if (i2 !== keys.length - 2) continue
+          const k2 = keys[i2 + 1]
+          const k2t = k2 ? type(k2) : null
+          const r = handleJsonNullInit(
+            k, k2, k2t, val, obj,
+            i2 === klen - 2,
+            i2 === klen - 1,
+            type, set,
+          )
+          _json = r._json
+          json = r.json
+          if (r.action === ACT_BREAK) break
+          if (r.action === ACT_CONTINUE) continue
+          // ACT_FALLTHROUGH → drop into terminal-key dispatch below
         } else if (i2 === 0) {
           const k2 = keys[i2 + 1]
-          if (!k2) {
-            arr_push(json, val, obj)
-            break
-          }
-          const t1 = type(k)
-          const t2 = type(k2)
-          if (t1 === 0) {
-            if (keys.length === 1) {
-              arr_push(json, val, obj)
-              break
-            } else if (keys.length === 2) {
-              if (t2 === 0) {
-                if (k2[2] === true) {
-                  set(k2)
-                  json.push([])
-                }
-                json = json[json.length - 1]
-                arr_push(json, val, obj)
-                break
-              } else {
-                if (!ex(k2) || k2[2] === true) {
-                  set(k2)
-                  json.push({})
-                }
-                json = json[json.length - 1]
-                arr_push(json, val, obj)
-                break
-              }
-            }
-
-            if (t2 === 0) {
-              if (!ex(k2) || k2[2] === true) {
-                set(k2)
-                json.push([])
-              } else if (
-                json.length > 0 &&
-                !Array.isArray(json[json.length - 1])
-              ) {
-                json.push([])
-              }
-              json = json[json.length - 1]
-            } else if (t2 === 1) {
-              if (!ex(k2) || k2[2] === true) {
-                set(k2)
-                json.push({})
-              }
-              json = json[json.length - 1]
-            }
-          } else if (t1 === 1) {
-            if (keys.length === 2) {
-              if (val.kind === KIND.DEL) delete json[k2[0]]
-              else obj_merge(json, k2[0], val, obj)
-              break
-            } else if (keys.length === 3 && t2 === 1) {
-              const k3 = keys[i2 + 2]
-              const t3 = type(k3)
-              if (typeof k2[3] !== "undefined") {
-                const parentPos = obj.krefs[k2[3] - 2]
-                if (parentPos && parentPos > 0) {
-                  const parentKey = obj.keys[parentPos - 1]
-                  if (typeof parentKey === "string") {
-                    if (
-                      typeof json[parentKey] !== "object" ||
-                      json[parentKey] === null ||
-                      Array.isArray(json[parentKey])
-                    ) {
-                      json[parentKey] = {}
-                    }
-                    json = json[parentKey]
-                  }
-                }
-              }
-            }
-          }
+          const r = handleFirstKey(json, k, k2, val, obj, klen, type, set, ex)
+          json = r.json
+          if (r.action === ACT_BREAK) break
           continue
         }
-        if (i2 > 0 && i2 < keys.length - 2) {
+        if (i2 > 0 && i2 < klen - 2) {
           json = handleMiddleKey(json, k, keys[i2 + 1], type, set, ex)
           continue
         }
-        if (i2 === keys.length - 2) {
-          // Terminal-key dispatch always exits the inner loop. The
-          // helper performs the action and returns the new json (which
-          // may have descended into a child container).
+        if (i2 === klen - 2) {
+          // Terminal-key dispatch always exits the inner loop.
           json = handleTerminalKey(
             json, k, keys[i2 + 1], val, obj, type, set, ex,
           )
