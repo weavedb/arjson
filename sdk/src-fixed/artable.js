@@ -1,4 +1,4 @@
-import { parsePath, escapeKey, bits } from "./utils.js"
+import { parsePath, escapeKey, bits, frombits } from "./utils.js"
 import { Encoder, _encode, pushPathStr } from "./encoder.js"
 import { Decoder } from "./decoder.js"
 import { Builder, getVal } from "./builder.js"
@@ -241,7 +241,7 @@ class ARTable {
         let type = null
         let k = this.keys[p - 1]
         if (Array.isArray(k) && k.length === 1 && typeof k[0] === "number") {
-          k = this.strmap[k[0]]
+          k = this.strmap[k[0].toString()]
         }
         if (Array.isArray(k)) type = "op"
         else if (typeof k === "number")
@@ -406,14 +406,14 @@ class ARTable {
     // Handle single value replacements (like null)
     if (d3.single) {
       // When the entire root is replaced with a single value, return it directly
-      return { left, json: d3.json }
+      return { left: frombits(left), json: d3.json }
     }
 
     const table = d3.table()
     this.compact(this.table(), table)
     const json = this.build()
     this.buildMap()
-    return { left, json }
+    return { left: frombits(left), json }
   }
 
   build() {

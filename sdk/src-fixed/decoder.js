@@ -1,13 +1,6 @@
-import { strmap_rev, base64_rev, base64_rev_byte, bits } from "./utils.js"
+import { strmap_rev, base64_rev, bits, tobits } from "./utils.js"
+import { includes, flatten } from "ramda"
 import { Builder } from "./builder.js"
-
-// Precomputed pow10 table. Decoding floats does `int / Math.pow(10, n)`
-// where n is small (precision, typically ≤ 20). Math.pow goes through
-// a slow path for non-integer second arg — even for integer second arg
-// it dispatches to a generic exponentiation routine. Direct table
-// lookup is much faster.
-const POW10 = new Float64Array(310)
-for (let i = 0; i < 310; i++) POW10[i] = Math.pow(10, i)
 
 class Decoder {
   constructor() {
@@ -16,31 +9,21 @@ class Decoder {
   }
 
   n(len) {
-    const c = this.c
-    const o = this.o
-    const byteIdx = c >>> 3
-    const bitOff = c & 7
-    this.c = c + len
-    if (this.c > o.length * 8 + 64) {
-      throw new Error("ARJSON decoder: read past end of buffer")
-    }
-    // Fast path: any read of ≤ 24 bits fits in a 32-bit window over up to
-    // 4 bytes. Out-of-range bytes coerce to undefined → 0 (zero-extend),
-    // matching the bit-by-bit fallback's behavior past the buffer end.
-    if (len <= 24) {
-      const w =
-        ((o[byteIdx] << 24) |
-          ((o[byteIdx + 1] | 0) << 16) |
-          ((o[byteIdx + 2] | 0) << 8) |
-          (o[byteIdx + 3] | 0)) >>> 0
-      return (w >>> (32 - bitOff - len)) & ((1 << len) - 1)
-    }
-    // Slow path: > 24 bits, reassemble bit-by-bit.
     let result = 0
     for (let i = 0; i < len; i++) {
-      const bitPos = c + i
-      const bit = (o[bitPos >> 3] >> (7 - (bitPos & 7))) & 1
+      const bitPos = this.c + i
+      const byteIndex = bitPos >> 3
+      const bitIndex = 7 - (bitPos & 7)
+      const bit = (this.o[byteIndex] >> bitIndex) & 1
       result = (result << 1) | bit
+    }
+    this.c += len
+    // Trip-wire: detect runaway over-read on malformed input. Legitimate
+    // decoding may zero-extend a few bits past the end during boundary
+    // alignment, but advancing far past the buffer means we're in an
+    // unbounded loop reading implicit zeros.
+    if (this.c > this.o.length * 8 + 64) {
+      throw new Error("ARJSON decoder: read past end of buffer")
     }
     return result
   }
@@ -55,16 +38,6 @@ class Decoder {
       shift += 7
     } while (byte & 0x80)
     return result
-  }
-
-  // Shared scratch buffer for charcodes during string decode.
-  // Plain JS array (length-truncatable) lets us pass it directly to
-  // String.fromCharCode.apply without a Uint16Array.subarray allocation
-  // per string (was 2-4% as CreateTypedArray + TypedArrayPrototypeSubArray).
-  _scratch(len) {
-    if (!this._scratchArr) this._scratchArr = []
-    this._scratchArr.length = len
-    return this._scratchArr
   }
 
   decode(v, count = null, strmap, strdiffs = []) {
@@ -88,45 +61,25 @@ class Decoder {
     this.bc = 0
     this.len = 0
     this.str_len = 0
-    // Use Object.create(null) to avoid prototype-chain lookups; V8
-    // also has a slight specialization for these. Still emits plain
-    // object via table() — backward compatible.
-    this.strmap = strmap ?? Object.create(null)
-    this.str_rev = Object.create(null)
+    this.strmap = strmap ?? {}
+    this.str_rev = {}
     for (let k in strmap) {
       this.str_len++
       this.str_rev[strmap[k]] = k
     }
     this.key_length = 0
     this.num_cache = null
-    // Reuse arrays across calls when possible; truncating with length=0
-    // is dramatically cheaper than allocating fresh arrays + GC pressure
-    // (avoids GrowFastSmiOrObjectElements re-grows on the first pushes).
-    if (this.vflags === undefined) {
-      this.vflags = []
-      this.kflags = []
-      this.bools = []
-      this.krefs = []
-      this.vrefs = []
-      this.ktypes = []
-      this.vtypes = []
-      this.nums = []
-      this.keys = []
-      this.strs = []
-      this.strdiffs = []
-    } else {
-      this.vflags.length = 0
-      this.kflags.length = 0
-      this.bools.length = 0
-      this.krefs.length = 0
-      this.vrefs.length = 0
-      this.ktypes.length = 0
-      this.vtypes.length = 0
-      this.nums.length = 0
-      this.keys.length = 0
-      this.strs.length = 0
-      this.strdiffs.length = 0
-    }
+    this.vflags = []
+    this.kflags = []
+    this.bools = []
+    this.krefs = []
+    this.vrefs = []
+    this.ktypes = []
+    this.vtypes = []
+    this.nums = []
+    this.keys = []
+    this.strs = []
+    this.strdiffs = []
     this.json = {}
     this.single = this.n(1) === 1
     if (this.single) this.getSingle()
@@ -146,47 +99,31 @@ class Decoder {
       this.buildStrMap()
       if (!this.nobuild) this.build()
     }
-    if (this.c & 7) this.c += 8 - (this.c & 7)
-    return this.o.subarray(this.c >>> 3)
+    if (this.c % 8 !== 0) this.c += 8 - (this.c % 8)
+    return tobits(this.o, this.c)
   }
 
   buildStrMap() {
     const plus = this.initial_count
     const plus2 = this.initial_count ? 0 : 1
-    const offset = 2 + plus
-    const krefs = this.krefs
-    const seen = new Uint8Array(krefs.length)
-    const vrefs = this.vrefs
-    const vlen = vrefs.length
-
-    // Walk each vref's chain of krefs. Inline traversal avoids the closure,
-    // unshift, ramda flatten, and intermediate { t, i } object allocation.
-    // The flat output is stored as parallel arrays: kinds (0=v, 1=k) and
-    // indices, so we don't allocate {t,i} per node.
-    const kinds = []
-    const indices = []
-    // Local stack for the krefs chain (so we can reverse them in-place
-    // without unshift's O(n²)).
-    const stack = []
-    for (let i = 0; i < vlen; i++) {
-      let kIdx = vrefs[i] - offset
-      stack.length = 0
-      while (kIdx >= 0 && kIdx < krefs.length && !seen[kIdx]) {
-        const k = krefs[kIdx]
-        if (k === undefined) break
-        seen[kIdx] = 1
-        stack.push(kIdx)
-        kIdx = k - offset
+    let seen = {}
+    const keys = (i, arr = []) => {
+      const k = this.krefs[i]
+      if (typeof k === "undefined" || seen[i]) return
+      else {
+        seen[i] = true
+        arr.unshift({ t: "k", i })
+        return keys(k - (2 + plus), arr)
       }
-      // emit reversed (root-to-leaf) krefs first, then the v
-      for (let j = stack.length - 1; j >= 0; j--) {
-        kinds.push(1)
-        indices.push(stack[j])
-      }
-      kinds.push(0)
-      indices.push(i)
     }
-
+    let _arr = []
+    let i = 0
+    for (const v of this.vrefs) {
+      let arr = [{ t: "v", i }]
+      keys(v - (2 + plus), arr)
+      _arr.push(arr)
+      i++
+    }
     const toMap = kv => {
       if (typeof kv === "string") {
         if (typeof this.str_rev[kv] === "undefined") {
@@ -197,13 +134,9 @@ class Decoder {
     }
 
     let str = 0
-    const flatLen = kinds.length
-    for (let n = 0; n < flatLen; n++) {
-      if (kinds[n] === 1) toMap(this.keys[indices[n] + plus2])
-      else {
-        const t = this.vtypes[indices[n]]
-        if (t === 2 || t === 7) toMap(this.strs[str++])
-      }
+    for (const v of flatten(_arr)) {
+      if (v.t === "k") toMap(this.keys[v.i + plus2])
+      else if (includes(this.vtypes[v.i], [2, 7])) toMap(this.strs[str++])
     }
   }
   getStrDiffs() {
@@ -256,43 +189,10 @@ class Decoder {
           if (len > maxBits) {
             throw new Error("ARJSON decoder: string length exceeds buffer")
           }
-          // Build into the shared Uint16Array scratch buffer, then a
-          // single String.fromCharCode.apply call. Reuses the buffer
-          // across strings within one decode, and across decode calls.
-          const codes = this._scratch(len)
-          if (type === 7) {
-            for (let i2 = 0; i2 < len; i2++) codes[i2] = Number(this.leb128())
-          } else {
-            // Inline n(6) for hot 6-bit reads (one per base64 char).
-            const o = this.o
-            let c = this.c
-            for (let i2 = 0; i2 < len; i2++) {
-              const byteIdx = c >>> 3
-              const bitOff = c & 7
-              const w =
-                ((o[byteIdx] << 24) |
-                  ((o[byteIdx + 1] | 0) << 16) |
-                  ((o[byteIdx + 2] | 0) << 8) |
-                  (o[byteIdx + 3] | 0)) >>> 0
-              codes[i2] = base64_rev_byte[(w >>> (26 - bitOff)) & 0x3f]
-              c += 6
-            }
-            this.c = c
-            if (this.c > o.length * 8 + 64) {
-              throw new Error("ARJSON decoder: read past end of buffer")
-            }
-          }
-          // Use subarray to limit fromCharCode to the actual length
-          // (scratch may be larger). For >16K chars, chunk to stay
-          // under the engine's apply() arg limit.
-          let val
-          if (len <= 16384) {
-            val = String.fromCharCode.apply(null, codes)
-          } else {
-            val = ""
-            for (let off = 0; off < len; off += 16384) {
-              val += String.fromCharCode.apply(null, codes.slice(off, Math.min(off + 16384, len)))
-            }
+          val = ""
+          for (let i2 = 0; i2 < len; i2++) {
+            if (type === 7) val += String.fromCharCode(Number(this.leb128()))
+            else val += base64_rev[this.n(6).toString()]
           }
           this.strs.push(val)
         }
@@ -315,40 +215,24 @@ class Decoder {
           const moved = this.uint()
           const n = this.uint()
           const neg = code === 7 ? 1 : -1
-          this.json = (n / (moved < 310 ? POW10[moved] : Math.pow(10, moved))) * neg
+          this.json = (n / Math.pow(10, moved)) * neg
         } else {
           const n = this.uint()
           this.json = -n
         }
       } else if (code < 61) {
-        this.json = strmap_rev[code - 9]
+        this.json = strmap_rev[(code - 9).toString()]
       } else if (code === 61) {
         this.json = String.fromCharCode(Number(this.leb128()))
       } else if (code === 62) {
         const len = this.short()
-        const codes = this._scratch(len)
-        for (let i = 0; i < len; i++) codes[i] = base64_rev_byte[this.n(6)]
-        if (len <= 16384) {
-          this.json = String.fromCharCode.apply(null, codes)
-        } else {
-          let s = ""
-          for (let off = 0; off < len; off += 16384) {
-            s += String.fromCharCode.apply(null, codes.slice(off, Math.min(off + 16384, len)))
-          }
-          this.json = s
-        }
+        this.json = ""
+        for (let i = 0; i < len; i++) this.json += base64_rev[this.n(6)]
       } else if (code === 63) {
+        this.json = ""
         const len = this.short()
-        const codes = this._scratch(len)
-        for (let i = 0; i < len; i++) codes[i] = Number(this.leb128())
-        if (len <= 16384) {
-          this.json = String.fromCharCode.apply(null, codes)
-        } else {
-          let s = ""
-          for (let off = 0; off < len; off += 16384) {
-            s += String.fromCharCode.apply(null, codes.slice(off, Math.min(off + 16384, len)))
-          }
-          this.json = s
+        for (let i = 0; i < len; i++) {
+          this.json += String.fromCharCode(Number(this.leb128()))
         }
       }
     }
@@ -374,21 +258,18 @@ class Decoder {
   }
 
   getVflags() {
+    // Bound allocation: each flag is 1 bit, so this.len can't exceed remaining
+    // buffer bits. Throw on malformed input that claims a longer run.
     const maxBits = this.o.length * 8 - this.c
     if (this.len > maxBits) {
       throw new Error("ARJSON decoder: vflags length exceeds remaining buffer")
     }
-    // Inline n(1) for the hot bit-by-bit flag read. Avoids 1721 method
-    // calls + function-frame allocation for each 1-bit read.
-    const o = this.o
-    const len = this.len
-    const vflags = this.vflags
-    let c = this.c
-    for (let i = 0; i < len; i++) {
-      vflags.push((o[c >>> 3] >> (7 - (c & 7))) & 1)
-      c++
+    let i = 0
+    while (i < this.len) {
+      const flag = this.n(1)
+      this.vflags.push(flag)
+      i++
     }
-    this.c = c
   }
 
   getKflags() {
@@ -397,14 +278,12 @@ class Decoder {
     if (need > maxBits) {
       throw new Error("ARJSON decoder: kflags length exceeds remaining buffer")
     }
-    const o = this.o
-    const kflags = this.kflags
-    let c = this.c
-    for (let i = 0; i < need; i++) {
-      kflags.push((o[c >>> 3] >> (7 - (c & 7))) & 1)
-      c++
+    let i = 0
+    while (i < need) {
+      const flag = this.n(1)
+      this.kflags.push(flag)
+      i++
     }
-    this.c = c
   }
 
   getKrefs() {
@@ -627,9 +506,7 @@ class Decoder {
             const int = this.dint(prev)
             prev = int
             const neg = num === 0 ? 1 : -1
-            const m1 = moved - 1
-            const denom = m1 < 310 ? POW10[m1] : Math.pow(10, m1)
-            this.nums.push((int / denom) * neg)
+            this.nums.push((int / Math.pow(10, moved - 1)) * neg)
           } else {
             const moved = num > 4 ? num - 4 : num
             const neg = num > 4 ? -1 : 1
@@ -637,9 +514,7 @@ class Decoder {
             else {
               const int = this.dint(prev)
               prev = int
-              const m1 = moved - 1
-              const denom = m1 < 310 ? POW10[m1] : Math.pow(10, m1)
-              this.nums.push((int / denom) * neg)
+              this.nums.push((int / Math.pow(10, moved - 1)) * neg)
             }
           }
         }
@@ -661,27 +536,9 @@ class Decoder {
             if (len > maxBits) {
               throw new Error("ARJSON decoder: key length exceeds buffer")
             }
-            const klen = len - 1
-            const codes = this._scratch(klen)
-            // Inline n(6) — same pattern as getStrs.
-            const o = this.o
-            let c = this.c
-            for (let i2 = 0; i2 < klen; i2++) {
-              const byteIdx = c >>> 3
-              const bitOff = c & 7
-              const w =
-                ((o[byteIdx] << 24) |
-                  ((o[byteIdx + 1] | 0) << 16) |
-                  ((o[byteIdx + 2] | 0) << 8) |
-                  (o[byteIdx + 3] | 0)) >>> 0
-              codes[i2] = base64_rev_byte[(w >>> (26 - bitOff)) & 0x3f]
-              c += 6
-            }
-            this.c = c
-            if (c > o.length * 8 + 64) {
-              throw new Error("ARJSON decoder: read past end of buffer")
-            }
-            this.keys.push(String.fromCharCode.apply(null, codes))
+            let key = ""
+            for (let i2 = 0; i2 < len - 1; i2++) key += base64_rev[this.n(6)]
+            this.keys.push(key)
           }
         } else {
           if (len === 2) this.keys.push("")
@@ -689,10 +546,11 @@ class Decoder {
             if (len > maxBits) {
               throw new Error("ARJSON decoder: key length exceeds buffer")
             }
-            const klen = len - 1
-            const codes = this._scratch(klen)
-            for (let i2 = 0; i2 < klen; i2++) codes[i2] = Number(this.leb128())
-            this.keys.push(String.fromCharCode.apply(null, codes))
+            let key = ""
+            for (let i2 = 0; i2 < len - 1; i2++) {
+              key += String.fromCharCode(Number(this.leb128()))
+            }
+            this.keys.push(key)
           }
         }
       }
@@ -700,25 +558,11 @@ class Decoder {
   }
 
   build() {
-    // Shared Builder instance — avoids per-decode allocation of
-    // Builder + the Uint8Array buffers it owns for arrs/objs.
-    const b = this._builder ?? (this._builder = new Builder())
-    b.setTable(this.table())
-    this.json = b.build()
-    // Direct field copy — was `for (k in artable)` which is
-    // megamorphic (StoreIC_Megamorphic in profile). The set of fields
-    // is fixed and known.
-    this.strmap = b.strmap
-    this.strdiffs = b.strdiffs
-    this.ktypes = b.ktypes
-    this.vrefs = b.vrefs
-    this.krefs = b.krefs
-    this.vtypes = b.vtypes
-    this.nums = b.nums
-    this.strs = b.strs
-    this.bools = b.bools
-    this.keys = b.keys
-    if (this.c & 7) this.c += 8 - (this.c & 7)
+    const builder = new Builder(this.table())
+    this.json = builder.build()
+    const artable = builder.table()
+    for (let k in artable) this[k] = artable[k]
+    if (this.c % 8 !== 0) this.c += 8 - (this.c % 8)
     return this.json
   }
 }

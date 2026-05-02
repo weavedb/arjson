@@ -74,19 +74,17 @@ describe("golden: positive integers ≥ 63 (LEB128 follow)", () => {
     assert.deepEqual(dec(enc(Number.MAX_SAFE_INTEGER)), Number.MAX_SAFE_INTEGER))
 })
 
-describe("golden: single chars (currently 2 bytes — see optimization-todo.md)", () => {
-  // The format spec says alphabetical chars should encode as 1 byte using
-  // codes 9–60 (charmap + 9). The current enc() doesn't pass the alphabet
-  // charmap to the encoder, so all single chars go through the
-  // non-alphabetical path (code 61 + LEB128 charcode = 2 bytes).
-  // Locking the current behavior; a future optimization can shrink these.
+describe("golden: single alphabetical chars use 1-byte charmap path", () => {
+  // Single A-Z, a-z chars encode as 1 byte via codes 9..60 (charmap + 9).
+  // Single non-alphabetical chars use the 2-byte fallback (code 61 +
+  // LEB128 of charcode).
   const cases = [
-    ["A", "bd41"],
-    ["Z", "bd5a"],
-    ["a", "bd61"],
-    ["x", "bd78"],
-    ["z", "bd7a"],
-    ["0", "bd30"],
+    ["A", "89"],     // charmap[A]=0  → 0+9=9    → bare-prefix(0) | 6bit(9)  = 0001001_pad = 0x89
+    ["Z", "a2"],     // charmap[Z]=25 → 25+9=34
+    ["a", "a3"],     // charmap[a]=26 → 26+9=35
+    ["x", "ba"],     // charmap[x]=49 → 49+9=58
+    ["z", "bc"],     // charmap[z]=51 → 51+9=60
+    ["0", "bd30"],   // not in charmap → 2-byte fallback
     ["_", "bd5f"],
   ]
   for (const [c, expected] of cases) {
@@ -149,7 +147,7 @@ describe("golden: encoded sizes for canonical inputs", () => {
     [63, 2],
     [-1, 2],
     [3.14, 4],
-    ["x", 2],
+    ["x", 1],
     ["hello", 6],
     [{ a: 1 }, 5],
     [[1], 3],

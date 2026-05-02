@@ -1,9 +1,5 @@
 import diff from "fast-diff"
-import { getPrecision, bits, tobits, strmap, strmap_byte, base64, base64_byte } from "./utils.js"
-
-// Precomputed pow10 lookup; matches the decoder's table.
-const POW10 = new Float64Array(310)
-for (let i = 0; i < 310; i++) POW10[i] = Math.pow(10, i)
+import { getPrecision, bits, tobits, strmap, base64 } from "./utils.js"
 
 class Encoder {
   constructor(n = 1) {
@@ -127,63 +123,63 @@ class Encoder {
   }
 
   add_vlinks(val, vlen) {
-    const maxIdx = (this.vlinks_len >> 5) + ((vlen + 31) >> 5) + 1
+    const maxIdx = (this.vlinks_len >> 5) + Math.ceil(vlen / 32) + 1
     if (maxIdx >= this.vlinks.length) this._grow()
     this.vlinks_len = this._add(this.vlinks, this.vlinks_len, val, vlen)
   }
   add_klinks(val, vlen) {
-    const maxIdx = (this.klinks_len >> 5) + ((vlen + 31) >> 5) + 1
+    const maxIdx = (this.klinks_len >> 5) + Math.ceil(vlen / 32) + 1
     if (maxIdx >= this.klinks.length) this._grow()
     this.klinks_len = this._add(this.klinks, this.klinks_len, val, vlen)
   }
   add_vflags(val, vlen) {
-    const maxIdx = (this.vflags_len >> 5) + ((vlen + 31) >> 5) + 1
+    const maxIdx = (this.vflags_len >> 5) + Math.ceil(vlen / 32) + 1
     if (maxIdx >= this.vflags.length) this._grow()
     this.vflags_len = this._add(this.vflags, this.vflags_len, val, vlen)
   }
   add_kflags(val, vlen) {
-    const maxIdx = (this.kflags_len >> 5) + ((vlen + 31) >> 5) + 1
+    const maxIdx = (this.kflags_len >> 5) + Math.ceil(vlen / 32) + 1
     if (maxIdx >= this.kflags.length) this._grow()
     this.kflags_len = this._add(this.kflags, this.kflags_len, val, vlen)
   }
   add_bools(val, vlen) {
-    const maxIdx = (this.bools_len >> 5) + ((vlen + 31) >> 5) + 1
+    const maxIdx = (this.bools_len >> 5) + Math.ceil(vlen / 32) + 1
     if (maxIdx >= this.bools.length) this._grow()
     this.bools_len = this._add(this.bools, this.bools_len, val, vlen)
   }
   add_keys(val, vlen) {
-    const maxIdx = (this.keys_len >> 5) + ((vlen + 31) >> 5) + 1
+    const maxIdx = (this.keys_len >> 5) + Math.ceil(vlen / 32) + 1
     if (maxIdx >= this.keys.length) this._grow()
     this.keys_len = this._add(this.keys, this.keys_len, val, vlen)
   }
   add_types(val, vlen) {
-    const maxIdx = (this.types_len >> 5) + ((vlen + 31) >> 5) + 1
+    const maxIdx = (this.types_len >> 5) + Math.ceil(vlen / 32) + 1
     if (maxIdx >= this.types.length) this._grow()
     this.types_len = this._add(this.types, this.types_len, val, vlen)
   }
   add_nums(val, vlen) {
-    const maxIdx = (this.nums_len >> 5) + ((vlen + 31) >> 5) + 1
+    const maxIdx = (this.nums_len >> 5) + Math.ceil(vlen / 32) + 1
     if (maxIdx >= this.nums.length) this._grow()
     this.nums_len = this._add(this.nums, this.nums_len, val, vlen)
   }
   add_dc(val, vlen) {
-    const maxIdx = (this.dc_len >> 5) + ((vlen + 31) >> 5) + 1
+    const maxIdx = (this.dc_len >> 5) + Math.ceil(vlen / 32) + 1
     if (maxIdx >= this.dc.length) this._grow()
     this.dc_len = this._add(this.dc, this.dc_len, val, vlen)
   }
   add_kvals(val, vlen) {
-    const maxIdx = (this.kvals_len >> 5) + ((vlen + 31) >> 5) + 1
+    const maxIdx = (this.kvals_len >> 5) + Math.ceil(vlen / 32) + 1
     if (maxIdx >= this.kvals.length) this._grow()
     this.kvals_len = this._add(this.kvals, this.kvals_len, val, vlen)
   }
   add_vals(val, vlen) {
-    const maxIdx = (this.vals_len >> 5) + ((vlen + 31) >> 5) + 1
+    const maxIdx = (this.vals_len >> 5) + Math.ceil(vlen / 32) + 1
     if (maxIdx >= this.vals.length) this._grow()
     this.vals_len = this._add(this.vals, this.vals_len, val, vlen)
   }
 
   add_strdiffs(val, vlen) {
-    const maxIdx = (this.strdiffs_len >> 5) + ((vlen + 31) >> 5) + 1
+    const maxIdx = (this.strdiffs_len >> 5) + Math.ceil(vlen / 32) + 1
     if (maxIdx >= this.strdiffs.length) this._grow()
     this.strdiffs_len = this._add(this.strdiffs, this.strdiffs_len, val, vlen)
   }
@@ -195,14 +191,31 @@ class Encoder {
   }
 
   _add(tar, len, val, vlen) {
-    // Caller (add_vflags etc.) is responsible for ensuring tar is large
-    // enough by calling _grow when needed. The previous in-loop grow +
-    // polymorphic re-bind chain was redundant overhead.
     if (vlen >= 32) val = val >>> 0
     else val &= (1 << vlen) - 1
     const used = len & 31
     const free = used === 0 ? 32 : 32 - used
     const idx = len >> 5
+    let maxIdx = idx + 1
+    if (vlen > free) {
+      const remaining = vlen - free
+      maxIdx = idx + 1 + Math.ceil(remaining / 32)
+    }
+    while (maxIdx >= tar.length) {
+      this._grow()
+      if (tar === this.vlinks) tar = this.vlinks
+      else if (tar === this.klinks) tar = this.klinks
+      else if (tar === this.vflags) tar = this.vflags
+      else if (tar === this.kflags) tar = this.kflags
+      else if (tar === this.bools) tar = this.bools
+      else if (tar === this.keys) tar = this.keys
+      else if (tar === this.types) tar = this.types
+      else if (tar === this.nums) tar = this.nums
+      else if (tar === this.dc) tar = this.dc
+      else if (tar === this.kvals) tar = this.kvals
+      else if (tar === this.vals) tar = this.vals
+      else if (tar === this.strdiffs) tar = this.strdiffs
+    }
 
     if (vlen <= free) {
       if (used === 0) tar[idx] = val
@@ -250,7 +263,7 @@ class Encoder {
   }
 
   get_diff(v, prev) {
-    let diff = prev === -1 ? v : v - prev
+    let diff = prev === null ? v : v - prev
     let isDiff = false
     if (diff < 0) {
       diff = Math.abs(diff) + 3
@@ -261,50 +274,21 @@ class Encoder {
   }
 
   push_vlink(v) {
-    // Inline get_diff: avoids method call + pack/unpack of result.
-    const prev = this.prev_link
-    let diff = prev === -1 ? v : v - prev
-    let isDiff
-    if (diff < 0) {
-      diff = -diff + 3
-      isDiff = diff < 7
-    } else isDiff = diff < 4
-    const v2 = isDiff ? diff : v
+    let result = this.get_diff(v, this.prev_link)
+    const isDiff = (result & 1) === 1
+    const v2 = Math.floor(result / 2)
     this.prev_link = v
-    // Inline push_vflag → add_vflags → _add for single-bit write.
-    // Single bit always fits in current word (free >= 1) so no grow
-    // path needed beyond a one-time capacity check.
-    const flag = isDiff ? 1 : 0
-    const vflen = this.vflags_len
-    const vfidx = vflen >>> 5
-    if (vfidx + 1 >= this.vflags.length) this._grow()
-    const vfused = vflen & 31
-    if (vfused === 0) this.vflags[vfidx] = flag
-    else this.vflags[vfidx] = (this.vflags[vfidx] << 1) | flag
-    this.vflags_len = vflen + 1
+    this.push_vflag(isDiff ? 1 : 0)
     this._push_vlink(v2, isDiff, this.dcount)
     this.rcount++
   }
 
   push_klink(v) {
-    const prev = this.prev_klink
-    let diff = prev === -1 ? v : v - prev
-    let isDiff
-    if (diff < 0) {
-      diff = -diff + 3
-      isDiff = diff < 7
-    } else isDiff = diff < 4
-    const v2 = isDiff ? diff : v
+    let result = this.get_diff(v, this.prev_klink)
+    const isDiff = (result & 1) === 1
+    const v2 = Math.floor(result / 2)
     this.prev_klink = v
-    // Inline single-bit kflag write — same pattern as push_vlink.
-    const flag = isDiff ? 1 : 0
-    const kflen = this.kflags_len
-    const kfidx = kflen >>> 5
-    if (kfidx + 1 >= this.kflags.length) this._grow()
-    const kfused = kflen & 31
-    if (kfused === 0) this.kflags[kfidx] = flag
-    else this.kflags[kfidx] = (this.kflags[kfidx] << 1) | flag
-    this.kflags_len = kflen + 1
+    this.push_kflag(isDiff ? 1 : 0)
     this._push_klink(v2, isDiff, this.dcount)
   }
 
@@ -463,17 +447,11 @@ class Encoder {
       this.dint(v, false)
       return
     }
-    // Inline get_diff: avoids method call + pack/unpack.
-    // Note: prev_num is initialized to 0 (not null), so the null check
-    // from get_diff is unnecessary here.
-    const prev = this.prev_num
-    let diff = v - prev
-    let isDiff
-    if (diff < 0) {
-      diff = -diff + 3
-      isDiff = diff < 7
-    } else isDiff = diff < 4
-    const v2 = isDiff ? diff : v
+
+    let result = this.get_diff(v, this.prev_num)
+    const isDiff = (result & 1) === 1
+    const v2 = Math.floor(result / 2)
+
     this.prev_num = v
     this.dint(v2, isDiff)
   }
@@ -714,8 +692,8 @@ class Encoder {
     this.prev_kbits = 1
     this.prev_num = 0
     this.nums_count = 0
-    this.prev_link = -1
-    this.prev_klink = -1
+    this.prev_link = null
+    this.prev_klink = null
     this.single = true
     this.len = 0
     this.dlen = 0
@@ -725,17 +703,6 @@ class Encoder {
     this.tcount = 0
     this.oid = 0
     this.iid = 0
-
-    // Reused [type, index, push] tuple. _encode mutates this in place
-    // and returns it; saves a fresh 3-element array allocation per
-    // recursive call (one per leaf value). All callers stash the returned
-    // reference into prev_type which always points to this same array.
-    if (!this._pt) this._pt = [0, null, null]
-    else {
-      this._pt[0] = 0
-      this._pt[1] = null
-      this._pt[2] = null
-    }
 
     this.vc_v = null
     this.vc_count = null
@@ -873,62 +840,11 @@ class Encoder {
     const outLength = finalBits / 8
     const out = new Uint8Array(outLength)
 
-    // Hot path: pack all column bits into `out`. Was implemented as
-    // closure-based writeBits/writeBuffer; V8 had trouble inlining
-    // them since they captured 3 mutable variables. Straight inline
-    // loop with unrolled column ordering is much faster.
     let outIndex = 0
     let accumulator = 0
     let accBits = 0
-    const _bufs = [
-      this.dc, this.vflags, this.vlinks, this.kflags, this.klinks,
-      this.keys, this.kvals, this.types, this.bools, this.nums,
-      this.vals, this.strdiffs,
-    ]
-    const _lens = [
-      this.dc_len, this.vflags_len, this.vlinks_len, this.kflags_len,
-      this.klinks_len, this.keys_len, this.kvals_len, this.types_len,
-      this.bools_len, this.nums_len, this.vals_len, this.strdiffs_len,
-    ]
-    for (let ci = 0; ci < 12; ci++) {
-      const buffer = _bufs[ci]
-      let remaining = _lens[ci]
-      const buflen = buffer.length
-      let bi = 0
-      while (remaining > 0 && bi < buflen) {
-        const bitsThis = remaining < 32 ? remaining : 32
-        let num = buffer[bi] >>> 0
-        let numBits = bitsThis
-        while (numBits > 0) {
-          const free = 8 - accBits
-          if (numBits <= free) {
-            accumulator = (accumulator << numBits) | (num & ((1 << numBits) - 1))
-            accBits += numBits
-            numBits = 0
-            if (accBits === 8) {
-              out[outIndex++] = accumulator
-              accumulator = 0
-              accBits = 0
-            }
-          } else {
-            const shift = numBits - free
-            const part = num >>> shift
-            accumulator = (accumulator << free) | (part & ((1 << free) - 1))
-            out[outIndex++] = accumulator
-            num = num & ((1 << shift) - 1)
-            numBits -= free
-            accumulator = 0
-            accBits = 0
-          }
-        }
-        remaining -= bitsThis
-        bi++
-      }
-    }
-    // Inline final pad bits (was writeBits(0, padBits) closure).
-    if (padBits > 0) {
-      let numBits = padBits
-      let num = 0
+
+    const writeBits = (num, numBits) => {
       while (numBits > 0) {
         const free = 8 - accBits
         if (numBits <= free) {
@@ -952,6 +868,30 @@ class Encoder {
         }
       }
     }
+
+    const writeBuffer = (buffer, bitLen) => {
+      let remaining = bitLen
+      let i = 0
+      while (remaining > 0 && i < buffer.length) {
+        const bitsThis = Math.min(32, remaining)
+        writeBits(buffer[i] >>> 0, bitsThis)
+        remaining -= bitsThis
+        i++
+      }
+    }
+    writeBuffer(this.dc, this.dc_len)
+    writeBuffer(this.vflags, this.vflags_len)
+    writeBuffer(this.vlinks, this.vlinks_len)
+    writeBuffer(this.kflags, this.kflags_len)
+    writeBuffer(this.klinks, this.klinks_len)
+    writeBuffer(this.keys, this.keys_len)
+    writeBuffer(this.kvals, this.kvals_len)
+    writeBuffer(this.types, this.types_len)
+    writeBuffer(this.bools, this.bools_len)
+    writeBuffer(this.nums, this.nums_len)
+    writeBuffer(this.vals, this.vals_len)
+    writeBuffer(this.strdiffs, this.strdiffs_len)
+    if (padBits > 0) writeBits(0, padBits)
     return out
   }
 }
@@ -965,48 +905,23 @@ function pushPathStr(u, v2, prev = null, diff = null) {
   } else {
     u.strMap.set(v2, u.str_len++)
     const len = v2.length
-    // Single-pass scan: charCodeAt + base64_byte lookup. Drops the
-    // dual codes/codes2 arrays and the for-of iterators.
-    let is64 = len !== 0
-    for (let i = 0; i < len; i++) {
-      const c = v2.charCodeAt(i)
-      if (c >= 128 || base64_byte[c] === 0xff) {
-        is64 = false
-        break
+    let ktype = 3
+    let codes = []
+    let codes2 = []
+    if (len !== 0) {
+      let is64 = true
+      for (let i = 0; i < len; i++) {
+        codes2.push(v2.charCodeAt(i))
+        const c = base64[v2[i]]
+        if (typeof c === "undefined") is64 = false
+        else codes.push(c)
       }
+      if (is64) ktype = 2
     }
-    const ktype = is64 ? 2 : 3
     u.add_keys(ktype, 2)
     u.push_keylen(len + 1)
-    if (is64) {
-      // Inline add_kvals(c, 6) in the inner per-char loop. Each
-      // 6-bit write fits within at most 2 words; precompute the
-      // grow margin once.
-      const need = ((len * 6 + 31) >> 5) + (u.kvals_len >> 5) + 1
-      while (need >= u.kvals.length) u._grow()
-      let kvlen = u.kvals_len
-      const kvals = u.kvals
-      for (let i = 0; i < len; i++) {
-        const val = base64_byte[v2.charCodeAt(i)]
-        const used = kvlen & 31
-        const free = 32 - used
-        const idx = kvlen >>> 5
-        if (free >= 6) {
-          if (used === 0) kvals[idx] = val
-          else kvals[idx] = ((kvals[idx] << 6) | val) >>> 0
-        } else {
-          // Split across word boundary
-          const high = val >>> (6 - free)
-          if (used === 0) kvals[idx] = high
-          else kvals[idx] = ((kvals[idx] << free) | high) >>> 0
-          kvals[idx + 1] = val & ((1 << (6 - free)) - 1)
-        }
-        kvlen += 6
-      }
-      u.kvals_len = kvlen
-    } else {
-      for (let i = 0; i < len; i++) u.leb128_2_kvals(v2.charCodeAt(i))
-    }
+    if (ktype === 3) for (let v of codes2) u.leb128_2_kvals(v)
+    else for (let v of codes) u.add_kvals(v, 6)
   }
   u.dcount++
 }
@@ -1051,15 +966,14 @@ function encode(v, u, query, strmap) {
         u.add_dc(0, 1)
         u.add_dc(type + 1, 6)
         u.uint_dc(moved)
-        u.uint_dc(Math.round((v < 0 ? -v : v) * (moved < 310 ? POW10[moved] : Math.pow(10, moved))))
+        u.uint_dc(Math.round((v < 0 ? -v : v) * Math.pow(10, moved)))
       }
     } else if (typeof v === "string") {
       u.add_dc(0, 1)
-      const len = v.length
-      if (len === 1) {
+      if (v.length === 1) {
         const charCode = v.charCodeAt(0)
-        const mapValue = charCode < 128 ? strmap_byte[charCode] : 0xff
-        if (mapValue !== 0xff) {
+        const mapValue = strmap[v]
+        if (typeof mapValue !== "undefined") {
           u.add_dc(mapValue + 9, 6)
         } else {
           u.add_dc(61, 6)
@@ -1067,21 +981,20 @@ function encode(v, u, query, strmap) {
         }
       } else {
         let is64 = true
-        for (let i = 0; i < len; i++) {
-          const c = v.charCodeAt(i)
-          if (c >= 128 || base64_byte[c] === 0xff) {
+        for (let i = 0; i < v.length; i++) {
+          if (typeof base64[v[i]] === "undefined") {
             is64 = false
             break
           }
         }
         if (is64) {
           u.add_dc(62, 6)
-          u.short_dc(len)
-          for (let i = 0; i < len; i++) u.add_dc(base64_byte[v.charCodeAt(i)], 6)
+          u.short_dc(v.length)
+          for (let i = 0; i < v.length; i++) u.add_dc(base64[v[i]], 6)
         } else {
           u.add_dc(63, 6)
-          u.short_dc(len)
-          for (let i = 0; i < len; i++) u.leb128_2_dc(v.charCodeAt(i))
+          u.short_dc(v.length)
+          for (let i = 0; i < v.length; i++) u.leb128_2_dc(v.charCodeAt(i))
         }
       }
     }
@@ -1111,13 +1024,16 @@ function _encode(
   diff,
 ) {
   if (typeof v === "number" && v - v !== 0) v = null
-  // Reusable [type, index, push] tuple. Mutating the shared scratch
-  // saves a 3-element array allocation per recursive call.
-  const _pt = u._pt
-  // Branch order: most common types first (number, string), then objects,
-  // then less common (boolean, null, undefined). Reordered for branch-
-  // prediction friendliness on bench workloads.
-  if (typeof v === "number") {
+  if (typeof v === "undefined") {
+    if (prev !== null) u.push_vlink(prev + 1)
+    if (
+      prev_type !== null &&
+      (prev_type[1] !== null || prev_type[2] !== null || prev_type[0] !== 1)
+    )
+      u.push_type(prev_type)
+    else u.tcount++
+    return [0, index, push]
+  } else if (typeof v === "number") {
     if (prev !== null) u.push_vlink(prev + 1)
     const isInt = (v | 0) === v || Number.isInteger(v)
     const moved = isInt ? 0 : Math.min(getPrecision(v), 308)
@@ -1133,20 +1049,9 @@ function _encode(
     } else {
       u.push_float(v < 0, moved + 1)
       if (moved > 2) u.push_int(moved + 1)
-      u.push_int(Math.round((v < 0 ? -v : v) * (moved < 310 ? POW10[moved] : Math.pow(10, moved))))
+      u.push_int(Math.round((v < 0 ? -v : v) * Math.pow(10, moved)))
     }
-    _pt[0] = type; _pt[1] = index; _pt[2] = push
-    return _pt
-  } else if (typeof v === "undefined") {
-    if (prev !== null) u.push_vlink(prev + 1)
-    if (
-      prev_type !== null &&
-      (prev_type[1] !== null || prev_type[2] !== null || prev_type[0] !== 1)
-    )
-      u.push_type(prev_type)
-    else u.tcount++
-    _pt[0] = 0; _pt[1] = index; _pt[2] = push
-    return _pt
+    return [type, index, push]
   } else if (typeof v === "boolean") {
     if (prev !== null) u.push_vlink(prev + 1)
     const type = 3
@@ -1157,8 +1062,7 @@ function _encode(
       u.push_type(prev_type)
     else u.tcount++
     u.push_bool(v)
-    _pt[0] = type; _pt[1] = index; _pt[2] = push
-    return _pt
+    return [type, index, push]
   } else if (v === null) {
     if (prev !== null) u.push_vlink(prev + 1)
     if (
@@ -1167,8 +1071,7 @@ function _encode(
     )
       u.push_type(prev_type)
     else u.tcount++
-    _pt[0] = 1; _pt[1] = index; _pt[2] = push
-    return _pt
+    return [1, index, push]
   } else if (typeof v === "string") {
     let ktype = 7
     if (prev !== null) u.push_vlink(prev + 1)
@@ -1186,41 +1089,21 @@ function _encode(
       u.strMap.set(v, u.str_len++)
       const len = v.length
       u.short_vals(len)
-      let is64 = len !== 0
-      for (let i = 0; i < len; i++) {
-        const c = v.charCodeAt(i)
-        if (c >= 128 || base64_byte[c] === 0xff) {
-          is64 = false
-          break
-        }
-      }
-      if (is64) {
-        ktype = 2
-        // Inline add_vals(c, 6) — same pattern as pushPathStr.
-        const need = ((len * 6 + 31) >> 5) + (u.vals_len >> 5) + 1
-        while (need >= u.vals.length) u._grow()
-        let vlen = u.vals_len
-        const vals = u.vals
+      let codes = []
+      let codes2 = []
+      let is64 = true
+      if (len === 0) is64 = false
+      else {
         for (let i = 0; i < len; i++) {
-          const val = base64_byte[v.charCodeAt(i)]
-          const used = vlen & 31
-          const free = 32 - used
-          const idx = vlen >>> 5
-          if (free >= 6) {
-            if (used === 0) vals[idx] = val
-            else vals[idx] = ((vals[idx] << 6) | val) >>> 0
-          } else {
-            const high = val >>> (6 - free)
-            if (used === 0) vals[idx] = high
-            else vals[idx] = ((vals[idx] << free) | high) >>> 0
-            vals[idx + 1] = val & ((1 << (6 - free)) - 1)
-          }
-          vlen += 6
+          codes2.push(v.charCodeAt(i))
+          const c = base64[v[i]]
+          if (typeof c === "undefined") is64 = false
+          else codes.push(c)
         }
-        u.vals_len = vlen
-      } else {
-        for (let i = 0; i < len; i++) u.leb128_2_vals(v.charCodeAt(i))
+        if (is64) ktype = 2
       }
+      if (is64) for (let v of codes) u.add_vals(v, 6)
+      else for (let v of codes2) u.leb128_2_vals(v)
     }
     if (
       prev_type !== null &&
@@ -1229,8 +1112,7 @@ function _encode(
       u.push_type(prev_type)
     } else u.tcount++
 
-    _pt[0] = ktype; _pt[1] = index; _pt[2] = push
-    return _pt
+    return [ktype, index, push]
   } else if (Array.isArray(v)) {
     if (v.length === 0) {
       pushPathNum(u, prev, 0, index)
@@ -1243,16 +1125,14 @@ function _encode(
         u.push_type(prev_type)
       } else u.tcount++
       u.push_float(false, 1)
-      _pt[0] = 6; _pt[1] = index; _pt[2] = push
-      return _pt
+      return [6, index, push]
     } else {
       const _prev = u.dcount
       pushPathNum(u, prev, 0, index)
-      // Index loop avoids the iterator object alloc + protocol calls
-      // of `for-of`. Drops unused `i++`.
-      const vlen = v.length
-      for (let vi = 0; vi < vlen; vi++) {
-        prev_type = _encode(v[vi], u, _prev, prev_type)
+      let i = 0
+      for (const v2 of v) {
+        prev_type = _encode(v2, u, _prev, prev_type)
+        i++
       }
     }
     return prev_type
@@ -1268,17 +1148,11 @@ function _encode(
         u.push_type(prev_type)
       } else u.tcount++
       u.push_float(true, 1)
-      _pt[0] = 6; _pt[1] = index; _pt[2] = push
-      return _pt
+      return [6, index, push]
     } else {
       pushPathNum(u, prev, 1, index)
       const __prev = u.dcount
-      // Object.keys + index loop is faster than for-in for POJOs
-      // (no inherited-property enumeration, no iterator protocol).
-      const keys = Object.keys(v)
-      const klen = keys.length
-      for (let ki = 0; ki < klen; ki++) {
-        const k = keys[ki]
+      for (const k in v) {
         const _prev = u.dcount
         pushPathStr(u, k, __prev - 1)
         prev_type = _encode(v[k], u, _prev, prev_type)

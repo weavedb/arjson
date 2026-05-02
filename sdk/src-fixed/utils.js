@@ -68,65 +68,21 @@ for (const s of str.split("")) {
   base64[s] = i++
 }
 
-// charCode-indexed lookup table for base64url chars.
-// 0..63 = base64 value, 0xff = not a base64url char.
-// Indexed by charCode 0..127. base64url chars are all ASCII.
-const base64_byte = new Uint8Array(128).fill(0xff)
-for (const s in base64) base64_byte[s.charCodeAt(0)] = base64[s]
-
-// charCode-indexed strmap lookup for A-Za-z. 0..51 valid, 0xff invalid.
-const strmap_byte = new Uint8Array(128).fill(0xff)
-for (const s in strmap) strmap_byte[s.charCodeAt(0)] = strmap[s]
-
-// Reverse lookup: index 0..63 → charCode of the base64url character at
-// that position. Used by decoder to avoid object dictionary lookup +
-// string allocation per char.
-const base64_rev_byte = new Uint8Array(64)
-for (const k in base64_rev) base64_rev_byte[parseInt(k, 10)] = base64_rev[k].charCodeAt(0)
-
-// Reverse lookup: index 0..51 → charCode of the strmap character at that
-// position. Used by single-char decode path.
-const strmap_rev_byte = new Uint8Array(52)
-for (const k in strmap_rev) strmap_rev_byte[parseInt(k, 10)] = strmap_rev[k].charCodeAt(0)
-
-// 4-slot rotating cache for getPrecision. Float-array workloads have
-// many distinct values; a 2-slot cache had ~50% hit rate, 4 slots hits
-// closer to 90% for typical sequences.
-let _gp_v0 = NaN, _gp_p0 = 0
-let _gp_v1 = NaN, _gp_p1 = 0
-let _gp_v2 = NaN, _gp_p2 = 0
-let _gp_v3 = NaN, _gp_p3 = 0
 function getPrecision(v) {
-  if (v === _gp_v0) return _gp_p0
-  if (v === _gp_v1) return _gp_p1
-  if (v === _gp_v2) return _gp_p2
-  if (v === _gp_v3) return _gp_p3
-  let p
-  if (v === 0) p = 0
-  else {
-    const s = v.toString()
-    const e = s.indexOf("e")
-    if (e !== -1) {
-      const mantissa = s.slice(0, e)
-      const exp = parseInt(s.slice(e + 1), 10)
-      const dot = mantissa.indexOf(".")
-      const mantissaPrec = dot === -1 ? 0 : mantissa.length - dot - 1
-      p = Math.max(0, mantissaPrec - exp)
-    } else {
-      const dot = s.indexOf(".")
-      if (dot === -1) p = 0
-      else {
-        const frac = s.slice(dot + 1).replace(/0+$/, "")
-        p = frac.length
-      }
-    }
+  if (v === 0) return 0
+  const s = v.toString()
+  const e = s.indexOf("e")
+  if (e !== -1) {
+    const mantissa = s.slice(0, e)
+    const exp = parseInt(s.slice(e + 1), 10)
+    const dot = mantissa.indexOf(".")
+    const mantissaPrec = dot === -1 ? 0 : mantissa.length - dot - 1
+    return Math.max(0, mantissaPrec - exp)
   }
-  // Rotate: evict slot 3, shift 0→1→2→3, write fresh to slot 0.
-  _gp_v3 = _gp_v2; _gp_p3 = _gp_p2
-  _gp_v2 = _gp_v1; _gp_p2 = _gp_p1
-  _gp_v1 = _gp_v0; _gp_p1 = _gp_p0
-  _gp_v0 = v; _gp_p0 = p
-  return p
+  const dot = s.indexOf(".")
+  if (dot === -1) return 0
+  const frac = s.slice(dot + 1).replace(/0+$/, "")
+  return frac.length
 }
 
 function escapeKey(k) {
@@ -286,12 +242,8 @@ export {
   bits,
   tobits,
   strmap,
-  strmap_byte,
   base64,
-  base64_byte,
   base64_rev,
-  base64_rev_byte,
   strmap_rev,
-  strmap_rev_byte,
   frombits,
 }

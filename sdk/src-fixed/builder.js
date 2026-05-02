@@ -16,15 +16,17 @@ class Builder {
     }
   }
 
-  constructor(table) {
-    if (table) this.setTable(table)
-  }
-
-  // Reusable Builder: setTable(table) updates fields in place so a
-  // single Builder instance can be reused across decode calls. Cuts
-  // per-decode allocation of Builder + its embedded Uint8Array buffers.
-  setTable({
-    ktypes, keys, vtypes, bools, nums, strs, vrefs, krefs, strmap, strdiffs,
+  constructor({
+    ktypes,
+    keys,
+    vtypes,
+    bools,
+    nums,
+    strs,
+    vrefs,
+    krefs,
+    strmap,
+    strdiffs,
   }) {
     this.strmap = strmap
     this.strdiffs = strdiffs
@@ -39,44 +41,12 @@ class Builder {
   }
 
   build() {
-    // The build pass only reads columns (vrefs, krefs, vtypes, keys, strs,
-    // strmap, strdiffs, etc.) — it mutates obj.arrs / obj.objs / counters.
-    // structuredClone was a deep copy of all columns, multi-MB on big
-    // inputs. Shallow object reference is correct and dramatically cheaper.
-    const t = this.table()
-    // Sparse "set of small ints" → Uint8Array-backed bitmap. Faster than
-    // Set (which has hash table lookup overhead, ~2.6% in profile) and
-    // faster than plain-object dictionary (which goes megamorphic).
-    // Sized to krefs.length + 2 to cover all possible ci values; build
-    // never indexes beyond that. Reuse instance-level buffers to avoid
-    // per-call allocation (was 4.2% as CreateTypedArray in profile).
-    const arrLen = (t.krefs?.length ?? 0) + 2
-    if (!this._arrs || this._arrs.length < arrLen) {
-      let cap = 16
-      while (cap < arrLen) cap <<= 1
-      this._arrs = new Uint8Array(cap)
-      this._objs = new Uint8Array(cap)
-    } else {
-      this._arrs.fill(0, 0, arrLen)
-      this._objs.fill(0, 0, arrLen)
-    }
-    const obj = {
-      vrefs: t.vrefs,
-      krefs: t.krefs,
-      ktypes: t.ktypes,
-      keys: t.keys,
-      vtypes: t.vtypes,
-      bools: t.bools,
-      nums: t.nums,
-      strs: t.strs,
-      strmap: t.strmap,
-      strdiffs: t.strdiffs,
-      arrs: this._arrs,
-      objs: this._objs,
-      nc: 0,
-      bc: 0,
-      sc: 0,
-    }
+    let obj = structuredClone(this.table())
+    obj.arrs = {}
+    obj.objs = {}
+    obj.nc = 0
+    obj.bc = 0
+    obj.sc = 0
 
     let _json = null
     if (obj.vrefs.length === 0) {
@@ -84,220 +54,25 @@ class Builder {
       return r.__val__
     }
 
-    // Fast paths: flat array of primitives, flat object of primitives.
-    // Both bypass the conditional inner loop and pre-allocate the
-    // result for direct index/key writes.
-    if (obj.vrefs.length >= 2) {
-      const _vrefs = obj.vrefs
-      const _vtypes = obj.vtypes
-      const _vlen = _vrefs.length
-      const root = _vrefs[0]
-
-      // ── Try flat array path ────────────────────────────────────
-      const rootKt = root >= 1 ? obj.ktypes[root - 1] : null
-      if (rootKt && rootKt[0] === 0 && (obj.krefs[root - 2] | 0) === 0) {
-        let allFlat = true
-        for (let vi = 0; vi < _vlen; vi++) {
-          if (_vrefs[vi] !== root) { allFlat = false; break }
-          const vt = _vtypes[vi]
-          if (vt !== 1 && vt !== 3 && vt !== 4 && vt !== 5 && vt !== 7) {
-            allFlat = false; break
-          }
-        }
-        if (allFlat) {
-          // Inline the value extraction (was getVal+wrapper-object alloc).
-          const out = new Array(_vlen)
-          const _bools = obj.bools
-          const _nums = obj.nums
-          const _strs = obj.strs
-          const _strmap = obj.strmap
-          const _strdiffs = obj.strdiffs
-          let nc = obj.nc, bc = obj.bc, sc = obj.sc
-          for (let vi = 0; vi < _vlen; vi++) {
-            const vt = _vtypes[vi]
-            // nums column has already-negated value for vt=5 (decoder
-            // pushes -num for type 5). vt=4/5/6 all read identically.
-            if (vt === 4 || vt === 5 || vt === 6) out[vi] = _nums[nc++]
-            else if (vt === 7) {
-              let str = _strs[sc++]
-              if (Array.isArray(str)) {
-                if (str[0] === -1) str = _strdiffs[str[1]]
-                else str = _strmap[str[0]]
-              }
-              out[vi] = str
-            }
-            else if (vt === 3) out[vi] = _bools[bc++]
-            else /* vt === 1 */ out[vi] = null
-          }
-          obj.nc = nc
-          obj.bc = bc
-          obj.sc = sc
-          return out
-        }
-      }
-
-      // ── Try array-of-flat-objects path ──────────────────────────
-      // Pattern: root is array, each element is an object whose values
-      // are primitives (depth-3 chain: leaf → key → obj → root).
-      // Covers redundant_users, time_series_100, arr_obj_100_homog.
-      if (rootKt && rootKt[0] === 0 && (obj.krefs[root - 2] | 0) === 0) {
-        const _krefs = obj.krefs
-        const _ktypes = obj.ktypes
-        const _keys = obj.keys
-        let isAoO = true
-        // Each leaf vref must resolve to a chain of: key → obj → root
-        // where obj's parent is root, and obj's ktype is [1].
-        for (let vi = 0; vi < _vlen; vi++) {
-          const keyKr = _vrefs[vi]
-          if (keyKr < 1) { isAoO = false; break }
-          const objKr = _krefs[keyKr - 2]
-          if (objKr === undefined || objKr < 1 || objKr === root) {
-            isAoO = false; break
-          }
-          const objParent = _krefs[objKr - 2] | 0
-          if (objParent !== root) { isAoO = false; break }
-          // Object's ktype must be [1] (object marker).
-          const objKt = _ktypes[objKr - 1]
-          if (!objKt || objKt[0] !== 1) { isAoO = false; break }
-          // Key's ktype must be 2 (string).
-          const keyKt = _ktypes[keyKr - 1]
-          if (!keyKt || keyKt[0] !== 2) { isAoO = false; break }
-          const vt = _vtypes[vi]
-          if (vt !== 1 && vt !== 3 && vt !== 4 && vt !== 5 && vt !== 7) {
-            isAoO = false; break
-          }
-        }
-        if (isAoO) {
-          const _bools = obj.bools
-          const _nums = obj.nums
-          const _strs = obj.strs
-          const _strmap = obj.strmap
-          const _strdiffs = obj.strdiffs
-          let nc = obj.nc, bc = obj.bc, sc = obj.sc
-          // Map obj kref → object index in result (allocated in encounter order).
-          const objIndex = {}
-          let nextIdx = 0
-          // Pre-pass: assign indices in vref-order. Inner objects are
-          // typically encountered in array order, but the structural check
-          // doesn't enforce that — discover via the index map.
-          const out = []
-          for (let vi = 0; vi < _vlen; vi++) {
-            const keyKr = _vrefs[vi]
-            const objKr = _krefs[keyKr - 2]
-            let oi = objIndex[objKr]
-            if (oi === undefined) {
-              oi = nextIdx++
-              objIndex[objKr] = oi
-              out[oi] = {}
-            }
-            // Resolve key: keys[keyKr - 1] is string OR [strmap_idx].
-            const k = _keys[keyKr - 1]
-            const kStr = typeof k === "string" ? k : _strmap[k[0]]
-            const vt = _vtypes[vi]
-            let val
-            if (vt === 4 || vt === 5 || vt === 6) val = _nums[nc++]
-            else if (vt === 7) {
-              let str = _strs[sc++]
-              if (Array.isArray(str)) {
-                if (str[0] === -1) str = _strdiffs[str[1]]
-                else str = _strmap[str[0]]
-              }
-              val = str
-            }
-            else if (vt === 3) val = _bools[bc++]
-            else val = null
-            out[oi][kStr] = val
-          }
-          obj.nc = nc
-          obj.bc = bc
-          obj.sc = sc
-          return out
-        }
-      }
-
-      // ── Try flat object path ───────────────────────────────────
-      // Object root: ktypes[0] = [1]. Keys are string-typed (ktype 2).
-      // krefs all point to root. vrefs sequential pointing to each key.
-      if (rootKt && rootKt[0] === 1 && (obj.krefs[root - 2] | 0) === 0) {
-        const _krefs = obj.krefs
-        let allFlat = _vlen === _krefs.length
-        for (let i = 0; i < _krefs.length && allFlat; i++) {
-          if (_krefs[i] !== root) { allFlat = false; break }
-        }
-        if (allFlat) {
-          for (let vi = 0; vi < _vlen; vi++) {
-            const vt = _vtypes[vi]
-            if (vt !== 1 && vt !== 3 && vt !== 4 && vt !== 5 && vt !== 7) {
-              allFlat = false; break
-            }
-            // Skip type-2 string-ref keys (they need strmap resolve).
-            const keyEntry = obj.keys[vi + 1]
-            if (typeof keyEntry !== "string") { allFlat = false; break }
-            // Verify key ktype is direct string (type 2 in ktypes), not
-            // an int/array marker.
-            const kt = obj.ktypes[vi + 1]
-            if (!kt || kt[0] !== 2) { allFlat = false; break }
-          }
-        }
-        if (allFlat) {
-          const out = {}
-          const _bools = obj.bools
-          const _nums = obj.nums
-          const _strs = obj.strs
-          const _strmap = obj.strmap
-          const _strdiffs = obj.strdiffs
-          const _keys = obj.keys
-          let nc = obj.nc, bc = obj.bc, sc = obj.sc
-          for (let vi = 0; vi < _vlen; vi++) {
-            const vt = _vtypes[vi]
-            const k = _keys[vi + 1]
-            if (vt === 4 || vt === 5 || vt === 6) out[k] = _nums[nc++]
-            else if (vt === 7) {
-              let str = _strs[sc++]
-              if (Array.isArray(str)) {
-                if (str[0] === -1) str = _strdiffs[str[1]]
-                else str = _strmap[str[0]]
-              }
-              out[k] = str
-            }
-            else if (vt === 3) out[k] = _bools[bc++]
-            else /* vt === 1 */ out[k] = null
-          }
-          obj.nc = nc
-          obj.bc = bc
-          obj.sc = sc
-          return out
-        }
-      }
-    }
-
     let i = 0
-    // init is a 2-bucket marker table — bucket 0 (arrays) and 1 (objects).
-    // k[1] can be an array index OR a strmap index; max is unknown up
-    // front, so use Set rather than a fixed-size typed array.
-    const init0 = new Set()
-    const init1 = new Set()
+    const init = [[], []]
     const type = k => (typeof k[0] === "string" ? 2 : k[0])
     const set = k => {
       if (k && k[0] !== null && k[0] !== undefined && k[1] !== undefined) {
-        if (k[0] === 0) init0.add(k[1])
-        else init1.add(k[1])
+        init[k[0]][k[1]] = true
         return true
       }
       return false
     }
+
     const ex = k =>
       k && k[0] !== null && k[0] !== undefined && k[1] !== undefined
-        ? k[0] === 0 ? init0.has(k[1]) : init1.has(k[1])
+        ? init[k[0]][k[1]] === true
         : false
 
-    // Reuse a single `keys` array across vref iterations — was a fresh
-    // [] per iteration. For wide inputs this saves an allocation per
-    // vref. Truncating with length=0 keeps the backing capacity.
-    const keys = []
     for (let vi = 0; vi < obj.vrefs.length; vi++) {
       const v = obj.vrefs[vi]
-      keys.length = 0
+      const keys = []
       getKey(v, keys, obj)
       const val = getVal(i, obj)
       i++
@@ -572,57 +347,39 @@ class Builder {
 }
 
 const getKey = (i, keys, obj) => {
-  // Walk the kref chain leaf-to-root iteratively, then reverse —
-  // avoids unshift's O(n²) per-call cost. Tracks a flag for whether
-  // any type-2 (strmap-ref) key was added; if not, skip the resolve
-  // post-pass entirely (most chains for primitive arrays/objects).
-  // Reuse a chain stack on obj across calls.
-  const chain = obj._chain ?? (obj._chain = [])
-  chain.length = 0
-  let cur = i
-  while (true) {
-    chain.push(cur)
-    if (cur > 1) {
-      const d = obj.krefs[cur - 2]
-      if (d > 0) {
-        cur = d
-        continue
-      }
+  const k = obj.keys[i - 1]
+  if (typeof k === "undefined") keys.unshift([null])
+  else if (Array.isArray(k)) keys.unshift([2, k[0], undefined, i])
+  else if (typeof k === "number") {
+    let reset = false
+    if (obj.arrs[i] !== true) {
+      reset = true
+      obj.arrs[i] = true
     }
-    break
+    keys.unshift([obj.ktypes[i - 1][0], k, reset, i])
+  } else {
+    let reset = false
+    if (obj.objs[i] !== true) {
+      reset = true
+      obj.objs[i] = true
+    }
+    keys.unshift([k, undefined, reset, i])
   }
-  // Emit in root-to-leaf order.
-  let hasRef = false
-  const baseLen = keys.length
-  for (let n = chain.length - 1; n >= 0; n--) {
-    const ci = chain[n]
-    const k = obj.keys[ci - 1]
-    if (typeof k === "undefined") keys.push([null])
-    else if (Array.isArray(k)) {
-      keys.push([2, k[0], undefined, ci])
-      hasRef = true
-    } else if (typeof k === "number") {
-      const reset = obj.arrs[ci] === 0
-      if (reset) obj.arrs[ci] = 1
-      keys.push([obj.ktypes[ci - 1][0], k, reset, ci])
-    } else {
-      const reset = obj.objs[ci] === 0
-      if (reset) obj.objs[ci] = 1
-      keys.push([k, undefined, reset, ci])
-    }
+  if (i > 1) {
+    const d = obj.krefs[i - 2]
+    if (d > 0) getKey(d, keys, obj)
   }
-  // Resolve type-2 (strmap reference) keys to strings only if any
-  // were emitted. Skip the loop entirely otherwise.
-  if (hasRef) {
-    const klen = keys.length
-    for (let i2 = baseLen; i2 < klen; i2++) {
-      const k = keys[i2]
-      if (Array.isArray(k) && k[0] === 2) {
-        const reset = obj.objs[i] === 0
-        if (reset) obj.objs[i] = 1
-        keys[i2] = [obj.strmap[k[1]], undefined, reset, i]
+  let i2 = 0
+  for (let k of keys) {
+    if (Array.isArray(k) && k[0] === 2) {
+      let reset = false
+      if (obj.objs[i] !== true) {
+        reset = true
+        obj.objs[i] = true
       }
+      keys[i2] = [obj.strmap[k[1].toString()], undefined, reset, i]
     }
+    i2++
   }
 }
 
@@ -632,7 +389,7 @@ const get = (obj, type) => {
     let str = obj.strs[obj.sc++]
     if (Array.isArray(str)) {
       if (str[0] === -1) str = obj.strdiffs[str[1]]
-      else str = obj.strmap[str[0]]
+      else str = obj.strmap[str[0].toString()]
     }
     val = str
   } else if (type === 4) val = obj.nums[obj.nc++]
