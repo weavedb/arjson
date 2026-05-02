@@ -1114,17 +1114,10 @@ function _encode(
   // Reusable [type, index, push] tuple. Mutating the shared scratch
   // saves a 3-element array allocation per recursive call.
   const _pt = u._pt
-  if (typeof v === "undefined") {
-    if (prev !== null) u.push_vlink(prev + 1)
-    if (
-      prev_type !== null &&
-      (prev_type[1] !== null || prev_type[2] !== null || prev_type[0] !== 1)
-    )
-      u.push_type(prev_type)
-    else u.tcount++
-    _pt[0] = 0; _pt[1] = index; _pt[2] = push
-    return _pt
-  } else if (typeof v === "number") {
+  // Branch order: most common types first (number, string), then objects,
+  // then less common (boolean, null, undefined). Reordered for branch-
+  // prediction friendliness on bench workloads.
+  if (typeof v === "number") {
     if (prev !== null) u.push_vlink(prev + 1)
     const isInt = (v | 0) === v || Number.isInteger(v)
     const moved = isInt ? 0 : Math.min(getPrecision(v), 308)
@@ -1143,6 +1136,16 @@ function _encode(
       u.push_int(Math.round((v < 0 ? -v : v) * (moved < 310 ? POW10[moved] : Math.pow(10, moved))))
     }
     _pt[0] = type; _pt[1] = index; _pt[2] = push
+    return _pt
+  } else if (typeof v === "undefined") {
+    if (prev !== null) u.push_vlink(prev + 1)
+    if (
+      prev_type !== null &&
+      (prev_type[1] !== null || prev_type[2] !== null || prev_type[0] !== 1)
+    )
+      u.push_type(prev_type)
+    else u.tcount++
+    _pt[0] = 0; _pt[1] = index; _pt[2] = push
     return _pt
   } else if (typeof v === "boolean") {
     if (prev !== null) u.push_vlink(prev + 1)
