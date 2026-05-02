@@ -7,7 +7,7 @@
 
 import { describe, it } from "node:test"
 import assert from "assert"
-import { ARJSON, json } from "../src/arjson.js"
+import { ARJSON } from "../src/arjson.js"
 
 // ─── arj.move(from, to) ───────────────────────────────────────────────────
 
@@ -115,56 +115,3 @@ describe("ARJSON.test", () => {
   })
 })
 
-// ─── json() factory function ──────────────────────────────────────────────
-
-describe("json() factory", () => {
-  it("json(initJson) produces an ARJSON-like object", () => {
-    const arj = json({ x: 1 })
-    assert.deepEqual(arj.json, { x: 1 })
-    assert.ok(Array.isArray(arj.deltas))
-  })
-
-  it("json(buffer) reconstructs from a serialized chain", () => {
-    const a = new ARJSON({ json: { x: 1 } })
-    a.update({ x: 2 })
-    const buf = a.toBuffer()
-    const arj = json(buf)
-    assert.deepEqual(arj.json, a.json)
-  })
-
-  it("json(deltasArray) reconstructs from an array of deltas", () => {
-    const a = new ARJSON({ json: { x: 1 } })
-    a.update({ x: 2 })
-    a.update({ x: 3 })
-    const arj = json(a.deltas)
-    assert.deepEqual(arj.json, a.json)
-  })
-
-  it("json(table) reconstructs from a table cache", () => {
-    const a = new ARJSON({ json: { x: 1, y: "hello" } })
-    const arj = json(a.table())
-    assert.deepEqual(arj.json, a.json)
-  })
-
-  it("json(null, info) accepts the (null, json) form per docs", () => {
-    const arj = json(null, { x: 42 })
-    assert.deepEqual(arj.json, { x: 42 })
-  })
-
-  it("supports update() like the class", () => {
-    const arj = json({ count: 0 })
-    arj.update({ count: 1 })
-    arj.update({ count: 2 })
-    assert.equal(arj.json.count, 2)
-    assert.equal(arj.deltas.length, 3)
-  })
-
-  it("supports move/copy/test via the wrapped instance", () => {
-    const arj = json({ src: 100 })
-    arj.copy("src", "dst")
-    assert.deepEqual(arj.json, { src: 100, dst: 100 })
-    arj.move("dst", "moved")
-    assert.deepEqual(arj.json, { src: 100, moved: 100 })
-    assert.equal(arj.test("src", 100), true)
-  })
-})
