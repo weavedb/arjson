@@ -1,5 +1,5 @@
 import diff from "fast-diff"
-import { getPrecision, bits, tobits, strmap, strmap_byte, base64, base64_byte } from "./utils.js"
+import { getPrecision, bits, tobits, strmap, base64 } from "./utils.js"
 
 class Encoder {
   constructor(n = 1) {
@@ -970,11 +970,10 @@ function encode(v, u, query, strmap) {
       }
     } else if (typeof v === "string") {
       u.add_dc(0, 1)
-      const len = v.length
-      if (len === 1) {
+      if (v.length === 1) {
         const charCode = v.charCodeAt(0)
-        const mapValue = charCode < 128 ? strmap_byte[charCode] : 0xff
-        if (mapValue !== 0xff) {
+        const mapValue = strmap[v]
+        if (typeof mapValue !== "undefined") {
           u.add_dc(mapValue + 9, 6)
         } else {
           u.add_dc(61, 6)
@@ -982,21 +981,20 @@ function encode(v, u, query, strmap) {
         }
       } else {
         let is64 = true
-        for (let i = 0; i < len; i++) {
-          const c = v.charCodeAt(i)
-          if (c >= 128 || base64_byte[c] === 0xff) {
+        for (let i = 0; i < v.length; i++) {
+          if (typeof base64[v[i]] === "undefined") {
             is64 = false
             break
           }
         }
         if (is64) {
           u.add_dc(62, 6)
-          u.short_dc(len)
-          for (let i = 0; i < len; i++) u.add_dc(base64_byte[v.charCodeAt(i)], 6)
+          u.short_dc(v.length)
+          for (let i = 0; i < v.length; i++) u.add_dc(base64[v[i]], 6)
         } else {
           u.add_dc(63, 6)
-          u.short_dc(len)
-          for (let i = 0; i < len; i++) u.leb128_2_dc(v.charCodeAt(i))
+          u.short_dc(v.length)
+          for (let i = 0; i < v.length; i++) u.leb128_2_dc(v.charCodeAt(i))
         }
       }
     }
@@ -1091,20 +1089,21 @@ function _encode(
       u.strMap.set(v, u.str_len++)
       const len = v.length
       u.short_vals(len)
-      let is64 = len !== 0
-      for (let i = 0; i < len; i++) {
-        const c = v.charCodeAt(i)
-        if (c >= 128 || base64_byte[c] === 0xff) {
-          is64 = false
-          break
+      let codes = []
+      let codes2 = []
+      let is64 = true
+      if (len === 0) is64 = false
+      else {
+        for (let i = 0; i < len; i++) {
+          codes2.push(v.charCodeAt(i))
+          const c = base64[v[i]]
+          if (typeof c === "undefined") is64 = false
+          else codes.push(c)
         }
+        if (is64) ktype = 2
       }
-      if (is64) {
-        ktype = 2
-        for (let i = 0; i < len; i++) u.add_vals(base64_byte[v.charCodeAt(i)], 6)
-      } else {
-        for (let i = 0; i < len; i++) u.leb128_2_vals(v.charCodeAt(i))
-      }
+      if (is64) for (let v of codes) u.add_vals(v, 6)
+      else for (let v of codes2) u.leb128_2_vals(v)
     }
     if (
       prev_type !== null &&

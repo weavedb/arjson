@@ -68,16 +68,6 @@ for (const s of str.split("")) {
   base64[s] = i++
 }
 
-// charCode-indexed lookup table for base64url chars.
-// 0..63 = base64 value, 0xff = not a base64url char.
-// Indexed by charCode 0..127. base64url chars are all ASCII.
-const base64_byte = new Uint8Array(128).fill(0xff)
-for (const s in base64) base64_byte[s.charCodeAt(0)] = base64[s]
-
-// charCode-indexed strmap lookup for A-Za-z. 0..51 valid, 0xff invalid.
-const strmap_byte = new Uint8Array(128).fill(0xff)
-for (const s in strmap) strmap_byte[s.charCodeAt(0)] = strmap[s]
-
 function getPrecision(v) {
   if (v === 0) return 0
   const s = v.toString()
@@ -252,9 +242,7 @@ export {
   bits,
   tobits,
   strmap,
-  strmap_byte,
   base64,
-  base64_byte,
   base64_rev,
   strmap_rev,
   frombits,

@@ -1,4 +1,4 @@
-import { strmap_rev, base64_rev, bits } from "./utils.js"
+import { strmap_rev, base64_rev, bits, tobits } from "./utils.js"
 import { includes, flatten } from "ramda"
 import { Builder } from "./builder.js"
 
@@ -99,8 +99,8 @@ class Decoder {
       this.buildStrMap()
       if (!this.nobuild) this.build()
     }
-    if (this.c & 7) this.c += 8 - (this.c & 7)
-    return this.o.subarray(this.c >>> 3)
+    if (this.c % 8 !== 0) this.c += 8 - (this.c % 8)
+    return tobits(this.o, this.c)
   }
 
   buildStrMap() {
