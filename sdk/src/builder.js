@@ -29,6 +29,83 @@ const buildEx = (k, init0, init1) =>
     ? k[0] === 0 ? init0.has(k[1]) : init1.has(k[1])
     : false
 
+// handleMiddleKey: dispatch for build's inner loop when this key is
+// neither the first nor in the terminal/terminal-1 position. Modifies
+// `json` (the current container the build is descending into) and
+// returns the new value of `json`. Side effect: may add to init0/init1
+// via the captured `set`/`ex` closures.
+//
+// The dispatch is on (jtype, ctype, ntype) where:
+//   jtype = 0 if json is an array, 1 if it's an object
+//   ctype = type(k)  (this position's key shape)
+//   ntype = type(k2) (next position's key shape)
+//
+// The 8 reachable combinations:
+//   jtype 1 + ctype 1:        object-index passthrough → skip (no json change)
+//   jtype 1 + ctype 2 + ntype 0: descend into array under string key
+//   jtype 1 + ctype 2 + ntype 1: descend into object under string key
+//   jtype 1 + ctype 2 + ntype 2: descend into object under string key
+//   jtype 0 + ctype 0 + ntype 0: descend into array under array slot
+//   jtype 0 + ctype 0 + ntype 1: descend into object under array slot
+//   jtype 0 + ctype 0 + ntype 2: descend into object under array slot
+const handleMiddleKey = (json, k, k2, type, set, ex) => {
+  const jtype = Array.isArray(json) ? 0 : 1
+  const ctype = type(k)
+  const ntype = type(k2)
+
+  // Skip object-index keys in the middle of the chain — we're already
+  // at the right object level. Actual navigation happens when we
+  // encounter string keys (type 2).
+  if (jtype === 1 && ctype === 1) return json
+
+  if (jtype === 1 && ctype === 2) {
+    if (ntype === 0) {
+      if (!Array.isArray(json[k[0]]) || k2?.[2] === true) json[k[0]] = []
+      return json[k[0]]
+    }
+    // ntype 1 or 2 → object descent
+    if (
+      typeof json[k[0]] !== "object" ||
+      json[k[0]] === null ||
+      Array.isArray(json[k[0]])
+    ) {
+      json[k[0]] = {}
+    }
+    return json[k[0]]
+  }
+
+  if (jtype === 0 && ctype === 0) {
+    if (ntype === 0) {
+      if (!ex(k2) || k2[2] === true) {
+        set(k2)
+        json.push([])
+        return json[json.length - 1]
+      }
+      if (json.length > 0 && !Array.isArray(json[json.length - 1])) {
+        set(k2)
+        json.push([])
+        return json[json.length - 1]
+      }
+      if (json.length > 0) {
+        set(k2)
+        return json[json.length - 1]
+      }
+      // json is array of length 0
+      set(k2)
+      json.push([])
+      return json[json.length - 1]
+    }
+    // ntype 1 or 2 → object slot
+    if (!ex(k2) || k2[2] === true) {
+      set(k2)
+      json.push({})
+    }
+    return json[json.length - 1]
+  }
+
+  return json
+}
+
 // Discriminated-union kinds for the value envelope produced by getVal.
 // Was previously a tagged-union of optional underscore-prefixed flags
 // (__val__, __del__, __merge__, __update__, __index__, __remove__).
@@ -468,77 +545,7 @@ class Builder {
           continue
         }
         if (i2 > 0 && i2 < keys.length - 2) {
-          const jtype = Array.isArray(json) ? 0 : 1
-          const ctype = type(k)
-          const k2 = keys[i2 + 1]
-          const ntype = type(k2)
-
-          if (jtype === 1 && ctype === 1) {
-            // Skip object-index keys in the middle of the chain — we're
-            // already at the right object level. Actual navigation
-            // happens when we encounter string keys (type 2).
-            continue
-          }
-
-          if (jtype === 1 && ctype === 2) {
-            if (ntype === 0) {
-              if (!Array.isArray(json[k[0]]) || k2?.[2] === true) {
-                json[k[0]] = []
-              }
-              json = json[k[0]]
-            } else if (ntype === 1) {
-              if (
-                typeof json[k[0]] !== "object" ||
-                json[k[0]] === null ||
-                Array.isArray(json[k[0]])
-              )
-                json[k[0]] = {}
-              json = json[k[0]]
-            } else if (ntype === 2) {
-              if (
-                typeof json[k[0]] !== "object" ||
-                json[k[0]] === null ||
-                Array.isArray(json[k[0]])
-              )
-                json[k[0]] = {}
-              json = json[k[0]]
-            }
-          } else if (jtype === 0 && ctype === 0) {
-            if (ntype === 0) {
-              if (!ex(k2) || k2[2] === true) {
-                set(k2)
-                json.push([])
-                json = json[json.length - 1]
-              } else if (
-                json &&
-                json.length > 0 &&
-                !Array.isArray(json[json.length - 1])
-              ) {
-                set(k2)
-                json.push([])
-                json = json[json.length - 1]
-              } else if (json && json.length > 0) {
-                set(k2)
-                json = json[json.length - 1]
-              } else if (json) {
-                set(k2)
-                json.push([])
-                json = json[json.length - 1]
-              }
-            } else if (ntype === 1) {
-              if (!ex(k2) || k2[2] === true) {
-                set(k2)
-                json.push({})
-              }
-              json = json[json.length - 1]
-            } else if (ntype === 2) {
-              if (!ex(k2) || k2[2] === true) {
-                set(k2)
-                json.push({})
-              }
-              json = json[json.length - 1]
-            }
-          }
+          json = handleMiddleKey(json, k, keys[i2 + 1], type, set, ex)
           continue
         }
         if (i2 === keys.length - 2) {
