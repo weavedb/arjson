@@ -273,15 +273,19 @@ class ARTable {
         prev = p
         i4++
       }
+      // val from getVal: SPLICE/SPLICE_DEL kinds carry an `index` field.
+      // For these the path uses the explicit splice index; for other
+      // kinds we use the running count of array slots seen.
+      const hasIndex =
+        typeof val.index !== "undefined" && typeof val.kind !== "undefined"
       if (this.kmap[prev]?.type === "arr") {
-        if (typeof val.__index__ !== "undefined") path += `[${val.__index__}]`
+        if (hasIndex) path += `[${val.index}]`
         else path += `[${this.kmap[prev].count}]`
       }
-
       if (
         prev !== null &&
         this.kmap[prev]?.type === "arr" &&
-        typeof val.__index__ === "undefined"
+        !hasIndex
       ) {
         this.kmap[prev].count++
       }
