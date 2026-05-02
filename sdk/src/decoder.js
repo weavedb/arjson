@@ -1,4 +1,4 @@
-import { strmap_rev, base64_rev, bits } from "./utils.js"
+import { strmap_rev, base64_rev, base64_rev_byte, bits } from "./utils.js"
 import { Builder } from "./builder.js"
 
 class Decoder {
@@ -235,10 +235,25 @@ class Decoder {
           if (len > maxBits) {
             throw new Error("ARJSON decoder: string length exceeds buffer")
           }
-          val = ""
-          for (let i2 = 0; i2 < len; i2++) {
-            if (type === 7) val += String.fromCharCode(Number(this.leb128()))
-            else val += base64_rev[this.n(6).toString()]
+          // Build into a Uint16Array of charcodes then a single
+          // String.fromCharCode.apply call — much faster than per-char
+          // string concatenation (which is O(n²) in JS).
+          const codes = new Uint16Array(len)
+          if (type === 7) {
+            for (let i2 = 0; i2 < len; i2++) codes[i2] = Number(this.leb128())
+          } else {
+            for (let i2 = 0; i2 < len; i2++) codes[i2] = base64_rev_byte[this.n(6)]
+          }
+          // String.fromCharCode.apply has a stack-arg limit (~64K on
+          // most engines). For longer strings, build in 16K chunks.
+          let val
+          if (len <= 16384) {
+            val = String.fromCharCode.apply(null, codes)
+          } else {
+            val = ""
+            for (let off = 0; off < len; off += 16384) {
+              val += String.fromCharCode.apply(null, codes.subarray(off, Math.min(off + 16384, len)))
+            }
           }
           this.strs.push(val)
         }
@@ -272,14 +287,30 @@ class Decoder {
         this.json = String.fromCharCode(Number(this.leb128()))
       } else if (code === 62) {
         const len = this.short()
-        this.json = ""
-        for (let i = 0; i < len; i++) this.json += base64_rev[this.n(6)]
+        const codes = new Uint16Array(len)
+        for (let i = 0; i < len; i++) codes[i] = base64_rev_byte[this.n(6)]
+        this.json = len <= 16384
+          ? String.fromCharCode.apply(null, codes)
+          : (() => {
+              let s = ""
+              for (let off = 0; off < len; off += 16384) {
+                s += String.fromCharCode.apply(null, codes.subarray(off, Math.min(off + 16384, len)))
+              }
+              return s
+            })()
       } else if (code === 63) {
-        this.json = ""
         const len = this.short()
-        for (let i = 0; i < len; i++) {
-          this.json += String.fromCharCode(Number(this.leb128()))
-        }
+        const codes = new Uint16Array(len)
+        for (let i = 0; i < len; i++) codes[i] = Number(this.leb128())
+        this.json = len <= 16384
+          ? String.fromCharCode.apply(null, codes)
+          : (() => {
+              let s = ""
+              for (let off = 0; off < len; off += 16384) {
+                s += String.fromCharCode.apply(null, codes.subarray(off, Math.min(off + 16384, len)))
+              }
+              return s
+            })()
       }
     }
   }
@@ -582,9 +613,10 @@ class Decoder {
             if (len > maxBits) {
               throw new Error("ARJSON decoder: key length exceeds buffer")
             }
-            let key = ""
-            for (let i2 = 0; i2 < len - 1; i2++) key += base64_rev[this.n(6)]
-            this.keys.push(key)
+            const klen = len - 1
+            const codes = new Uint16Array(klen)
+            for (let i2 = 0; i2 < klen; i2++) codes[i2] = base64_rev_byte[this.n(6)]
+            this.keys.push(String.fromCharCode.apply(null, codes))
           }
         } else {
           if (len === 2) this.keys.push("")
@@ -592,11 +624,10 @@ class Decoder {
             if (len > maxBits) {
               throw new Error("ARJSON decoder: key length exceeds buffer")
             }
-            let key = ""
-            for (let i2 = 0; i2 < len - 1; i2++) {
-              key += String.fromCharCode(Number(this.leb128()))
-            }
-            this.keys.push(key)
+            const klen = len - 1
+            const codes = new Uint16Array(klen)
+            for (let i2 = 0; i2 < klen; i2++) codes[i2] = Number(this.leb128())
+            this.keys.push(String.fromCharCode.apply(null, codes))
           }
         }
       }

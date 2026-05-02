@@ -704,6 +704,17 @@ class Encoder {
     this.oid = 0
     this.iid = 0
 
+    // Reused [type, index, push] tuple. _encode mutates this in place
+    // and returns it; saves a fresh 3-element array allocation per
+    // recursive call (one per leaf value). All callers stash the returned
+    // reference into prev_type which always points to this same array.
+    if (!this._pt) this._pt = [0, null, null]
+    else {
+      this._pt[0] = 0
+      this._pt[1] = null
+      this._pt[2] = null
+    }
+
     this.vc_v = null
     this.vc_count = null
     this.kc_v = null
@@ -1026,6 +1037,9 @@ function _encode(
   diff,
 ) {
   if (typeof v === "number" && v - v !== 0) v = null
+  // Reusable [type, index, push] tuple. Mutating the shared scratch
+  // saves a 3-element array allocation per recursive call.
+  const _pt = u._pt
   if (typeof v === "undefined") {
     if (prev !== null) u.push_vlink(prev + 1)
     if (
@@ -1034,7 +1048,8 @@ function _encode(
     )
       u.push_type(prev_type)
     else u.tcount++
-    return [0, index, push]
+    _pt[0] = 0; _pt[1] = index; _pt[2] = push
+    return _pt
   } else if (typeof v === "number") {
     if (prev !== null) u.push_vlink(prev + 1)
     const isInt = (v | 0) === v || Number.isInteger(v)
@@ -1053,7 +1068,8 @@ function _encode(
       if (moved > 2) u.push_int(moved + 1)
       u.push_int(Math.round((v < 0 ? -v : v) * Math.pow(10, moved)))
     }
-    return [type, index, push]
+    _pt[0] = type; _pt[1] = index; _pt[2] = push
+    return _pt
   } else if (typeof v === "boolean") {
     if (prev !== null) u.push_vlink(prev + 1)
     const type = 3
@@ -1064,7 +1080,8 @@ function _encode(
       u.push_type(prev_type)
     else u.tcount++
     u.push_bool(v)
-    return [type, index, push]
+    _pt[0] = type; _pt[1] = index; _pt[2] = push
+    return _pt
   } else if (v === null) {
     if (prev !== null) u.push_vlink(prev + 1)
     if (
@@ -1073,7 +1090,8 @@ function _encode(
     )
       u.push_type(prev_type)
     else u.tcount++
-    return [1, index, push]
+    _pt[0] = 1; _pt[1] = index; _pt[2] = push
+    return _pt
   } else if (typeof v === "string") {
     let ktype = 7
     if (prev !== null) u.push_vlink(prev + 1)
@@ -1113,7 +1131,8 @@ function _encode(
       u.push_type(prev_type)
     } else u.tcount++
 
-    return [ktype, index, push]
+    _pt[0] = ktype; _pt[1] = index; _pt[2] = push
+    return _pt
   } else if (Array.isArray(v)) {
     if (v.length === 0) {
       pushPathNum(u, prev, 0, index)
@@ -1126,7 +1145,8 @@ function _encode(
         u.push_type(prev_type)
       } else u.tcount++
       u.push_float(false, 1)
-      return [6, index, push]
+      _pt[0] = 6; _pt[1] = index; _pt[2] = push
+      return _pt
     } else {
       const _prev = u.dcount
       pushPathNum(u, prev, 0, index)
@@ -1149,7 +1169,8 @@ function _encode(
         u.push_type(prev_type)
       } else u.tcount++
       u.push_float(true, 1)
-      return [6, index, push]
+      _pt[0] = 6; _pt[1] = index; _pt[2] = push
+      return _pt
     } else {
       pushPathNum(u, prev, 1, index)
       const __prev = u.dcount

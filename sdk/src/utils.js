@@ -78,6 +78,17 @@ for (const s in base64) base64_byte[s.charCodeAt(0)] = base64[s]
 const strmap_byte = new Uint8Array(128).fill(0xff)
 for (const s in strmap) strmap_byte[s.charCodeAt(0)] = strmap[s]
 
+// Reverse lookup: index 0..63 → charCode of the base64url character at
+// that position. Used by decoder to avoid object dictionary lookup +
+// string allocation per char.
+const base64_rev_byte = new Uint8Array(64)
+for (const k in base64_rev) base64_rev_byte[parseInt(k, 10)] = base64_rev[k].charCodeAt(0)
+
+// Reverse lookup: index 0..51 → charCode of the strmap character at that
+// position. Used by single-char decode path.
+const strmap_rev_byte = new Uint8Array(52)
+for (const k in strmap_rev) strmap_rev_byte[parseInt(k, 10)] = strmap_rev[k].charCodeAt(0)
+
 function getPrecision(v) {
   if (v === 0) return 0
   const s = v.toString()
@@ -256,6 +267,8 @@ export {
   base64,
   base64_byte,
   base64_rev,
+  base64_rev_byte,
   strmap_rev,
+  strmap_rev_byte,
   frombits,
 }
