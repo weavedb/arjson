@@ -851,11 +851,62 @@ class Encoder {
     const outLength = finalBits / 8
     const out = new Uint8Array(outLength)
 
+    // Hot path: pack all column bits into `out`. Was implemented as
+    // closure-based writeBits/writeBuffer; V8 had trouble inlining
+    // them since they captured 3 mutable variables. Straight inline
+    // loop with unrolled column ordering is much faster.
     let outIndex = 0
     let accumulator = 0
     let accBits = 0
-
-    const writeBits = (num, numBits) => {
+    const _bufs = [
+      this.dc, this.vflags, this.vlinks, this.kflags, this.klinks,
+      this.keys, this.kvals, this.types, this.bools, this.nums,
+      this.vals, this.strdiffs,
+    ]
+    const _lens = [
+      this.dc_len, this.vflags_len, this.vlinks_len, this.kflags_len,
+      this.klinks_len, this.keys_len, this.kvals_len, this.types_len,
+      this.bools_len, this.nums_len, this.vals_len, this.strdiffs_len,
+    ]
+    for (let ci = 0; ci < 12; ci++) {
+      const buffer = _bufs[ci]
+      let remaining = _lens[ci]
+      const buflen = buffer.length
+      let bi = 0
+      while (remaining > 0 && bi < buflen) {
+        const bitsThis = remaining < 32 ? remaining : 32
+        let num = buffer[bi] >>> 0
+        let numBits = bitsThis
+        while (numBits > 0) {
+          const free = 8 - accBits
+          if (numBits <= free) {
+            accumulator = (accumulator << numBits) | (num & ((1 << numBits) - 1))
+            accBits += numBits
+            numBits = 0
+            if (accBits === 8) {
+              out[outIndex++] = accumulator
+              accumulator = 0
+              accBits = 0
+            }
+          } else {
+            const shift = numBits - free
+            const part = num >>> shift
+            accumulator = (accumulator << free) | (part & ((1 << free) - 1))
+            out[outIndex++] = accumulator
+            num = num & ((1 << shift) - 1)
+            numBits -= free
+            accumulator = 0
+            accBits = 0
+          }
+        }
+        remaining -= bitsThis
+        bi++
+      }
+    }
+    // Inline final pad bits (was writeBits(0, padBits) closure).
+    if (padBits > 0) {
+      let numBits = padBits
+      let num = 0
       while (numBits > 0) {
         const free = 8 - accBits
         if (numBits <= free) {
@@ -879,30 +930,6 @@ class Encoder {
         }
       }
     }
-
-    const writeBuffer = (buffer, bitLen) => {
-      let remaining = bitLen
-      let i = 0
-      while (remaining > 0 && i < buffer.length) {
-        const bitsThis = Math.min(32, remaining)
-        writeBits(buffer[i] >>> 0, bitsThis)
-        remaining -= bitsThis
-        i++
-      }
-    }
-    writeBuffer(this.dc, this.dc_len)
-    writeBuffer(this.vflags, this.vflags_len)
-    writeBuffer(this.vlinks, this.vlinks_len)
-    writeBuffer(this.kflags, this.kflags_len)
-    writeBuffer(this.klinks, this.klinks_len)
-    writeBuffer(this.keys, this.keys_len)
-    writeBuffer(this.kvals, this.kvals_len)
-    writeBuffer(this.types, this.types_len)
-    writeBuffer(this.bools, this.bools_len)
-    writeBuffer(this.nums, this.nums_len)
-    writeBuffer(this.vals, this.vals_len)
-    writeBuffer(this.strdiffs, this.strdiffs_len)
-    if (padBits > 0) writeBits(0, padBits)
     return out
   }
 }
