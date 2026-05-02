@@ -272,17 +272,43 @@ class ARTable {
     this.keys = keys
     this.vrefs = vrefs
   }
+  // ── buildMap() — derive lookup tables from the column data ────────────
+  //
+  // After encode/decode/compact have populated the table columns, we
+  // need two derived structures for path-based lookup during delta
+  // updates:
+  //   - kmap:   kref index → { type, count, index, parent, path?, val_type? }
+  //   - keymap: path string → { index, type, val_type, parent }
+  //
+  // Implementation is split into 4 steps:
+  //   1. _resetCursors  — zero out the per-build cursors and tables
+  //   2. _buildVkChains — for each vref, walk its kref chain leaf-to-root,
+  //                       reverse to root-to-leaf, store on this.vk
+  //   3. _buildKmap     — populate kmap with type/count/index/parent/path
+  //                       for each kref encountered along the chains
+  //   4. _buildKeymap   — fill val_type from child entries; expose
+  //                       path-keyed lookup as this.keymap
   buildMap() {
+    this._resetCursors()
+    this._buildVkChains()
+    this._buildKmap()
+    this._buildKeymap()
+  }
+
+  _resetCursors() {
     this.keymap = {}
     this.nc = 0
     this.bc = 0
     this.sc = 0
     this.kmap = {}
     this.vk = []
-    let vi = -1
+  }
+
+  _buildVkChains() {
+    // For each vref, push the chain [root, ..., leaf-kref] onto this.vk.
+    // Builds bottom-up via krefs[v-2] then reverses with unshift.
     for (const v of this.vrefs) {
-      vi++
-      let vk = []
+      const vk = []
       let p = v
       do {
         vk.unshift(p)
@@ -290,23 +316,30 @@ class ARTable {
       } while (typeof p !== "undefined")
       this.vk.push(vk)
     }
+  }
+
+  // Classify a kref position by what kind of key/container it is.
+  _krefType(p) {
+    let k = this.keys[p - 1]
+    if (Array.isArray(k) && k.length === 1 && typeof k[0] === "number") {
+      k = this.strmap[k[0]]
+    }
+    if (Array.isArray(k)) return { type: "op", k }
+    if (typeof k === "number") {
+      return { type: this.ktypes[p - 1][0] === 0 ? "arr" : "map", k }
+    }
+    return { type: "str", k }
+  }
+
+  _buildKmap() {
     let prev = null
     let i3 = 0
-    for (const v of this.vk) {
+    for (const chain of this.vk) {
       const val = getVal(i3, this)
       let path = ""
-      let i4 = 0
       let _prev = null
-      for (const p of v) {
-        let type = null
-        let k = this.keys[p - 1]
-        if (Array.isArray(k) && k.length === 1 && typeof k[0] === "number") {
-          k = this.strmap[k[0]]
-        }
-        if (Array.isArray(k)) type = "op"
-        else if (typeof k === "number")
-          type = this.ktypes[p - 1][0] === 0 ? "arr" : "map"
-        else type = "str"
+      for (const p of chain) {
+        const { type, k } = this._krefType(p)
         if (typeof this.kmap[p] === "undefined") {
           this.kmap[p] = {
             count: 0,
@@ -314,10 +347,8 @@ class ARTable {
             index: this.kmap[prev]?.count ?? null,
             parent: _prev,
           }
-          if (
-            prev !== null &&
-            (this.kmap[prev]?.type === "arr" || this.kmap[prev]?.type === "map")
-          ) {
+          const prevType = this.kmap[prev]?.type
+          if (prev !== null && (prevType === "arr" || prevType === "map")) {
             this.kmap[prev].count++
           }
         }
@@ -331,27 +362,26 @@ class ARTable {
         }
         _prev = p
         prev = p
-        i4++
       }
-      // val from getVal: SPLICE/SPLICE_DEL kinds carry an `index` field.
-      // For these the path uses the explicit splice index; for other
-      // kinds we use the running count of array slots seen.
+      // SPLICE / SPLICE_DEL kinds carry an explicit `index` field; use
+      // it for the leaf array position. Otherwise use the running count
+      // of array slots seen and increment the count for next time.
       const hasIndex =
         typeof val.index !== "undefined" && typeof val.kind !== "undefined"
       if (this.kmap[prev]?.type === "arr") {
         if (hasIndex) path += `[${val.index}]`
         else path += `[${this.kmap[prev].count}]`
       }
-      if (
-        prev !== null &&
-        this.kmap[prev]?.type === "arr" &&
-        !hasIndex
-      ) {
+      if (prev !== null && this.kmap[prev]?.type === "arr" && !hasIndex) {
         this.kmap[prev].count++
       }
       i3++
     }
-    for (let k in this.kmap) {
+  }
+
+  _buildKeymap() {
+    // First pass: each container kref gets val_type from its child's type.
+    for (const k in this.kmap) {
       const km = this.kmap[k]
       if (km.type === "arr" || km.type === "map") {
         if (typeof this.kmap[km.parent] !== "undefined") {
@@ -359,8 +389,8 @@ class ARTable {
         }
       }
     }
-
-    for (let k in this.kmap) {
+    // Second pass: expose entries with paths via keymap.
+    for (const k in this.kmap) {
       const km = this.kmap[k]
       if (typeof km.path !== "undefined") {
         this.keymap[km.path] = {
