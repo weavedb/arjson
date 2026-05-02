@@ -84,6 +84,47 @@ class Builder {
       return r.__val__
     }
 
+    // Fast path: flat array of primitives at root.
+    // Detect: all vrefs equal, the root parent has no kref chain
+    // (krefs[parent-2] is undefined or 0), root ktype is array, all
+    // vtypes are primitive (not Array, not delta marker).
+    if (obj.vrefs.length >= 2) {
+      const root = obj.vrefs[0]
+      let isFlat = root >= 1
+      if (isFlat) {
+        // Root must be top level (no parent chain).
+        const parentRef = obj.krefs[root - 2]
+        if (parentRef !== undefined && parentRef > 0) isFlat = false
+      }
+      if (isFlat) {
+        const rootKt = obj.ktypes[root - 1]
+        if (!rootKt || rootKt[0] !== 0) isFlat = false
+      }
+      if (isFlat) {
+        const _vrefs = obj.vrefs
+        const _vtypes = obj.vtypes
+        const _vlen = _vrefs.length
+        for (let vi = 0; vi < _vlen; vi++) {
+          if (_vrefs[vi] !== root) { isFlat = false; break }
+          const vt = _vtypes[vi]
+          // 1=null, 3=bool, 4=pos int, 5=neg int, 7=str. Reject 2
+          // (string-ref, has special handling) and arrays/markers.
+          if (vt !== 1 && vt !== 3 && vt !== 4 && vt !== 5 && vt !== 7) {
+            isFlat = false; break
+          }
+        }
+      }
+      if (isFlat) {
+        const _vlen = obj.vrefs.length
+        const out = new Array(_vlen)
+        for (let vi = 0; vi < _vlen; vi++) {
+          const r = getVal(vi, obj)
+          out[vi] = r.__val__
+        }
+        return out
+      }
+    }
+
     let i = 0
     // init is a 2-bucket marker table — bucket 0 (arrays) and 1 (objects).
     // k[1] can be an array index OR a strmap index; max is unknown up
