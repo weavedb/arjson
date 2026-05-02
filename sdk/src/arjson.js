@@ -19,6 +19,16 @@ export const dec = arj => {
   return _sharedDec.json
 }
 
+// ── diff helpers ─────────────────────────────────────────────────────────
+
+const isPrimitive = v => !is(Object, v) || v === null
+const hasNonPrimitive = arr => arr.some(v => !isPrimitive(v))
+
+// shouldUseDiff: decide whether a string change is worth encoding as a
+// fast-diff (Myers diff) op vs a full replace. Threshold: both sides
+// must be ≥ 20 chars and the change-size must be < 60% of `to` length.
+// Below threshold the overhead of encoding the diff outweighs the
+// savings of not re-emitting the full new string.
 function shouldUseDiff(from, to) {
   if (typeof from !== "string" || typeof to !== "string") return false
   if (from.length < 20 || to.length < 20) return false
@@ -30,147 +40,147 @@ function shouldUseDiff(from, to) {
   return changeSize < to.length * 0.6
 }
 
+// Build a single-element op list — used for several "fall back to full
+// replace" cases that detect this pair can't be incrementally diffed.
+const replaceOp = (path, from, to) => [{ path, op: "replace", from, to }]
+
+// Emit the right shape for a primitive-element scalar change: a "diff"
+// op when the strings are big enough to benefit from Myers, else a
+// "replace" op.
+function primitiveChangeOp(path, from, to) {
+  if (shouldUseDiff(from, to)) {
+    return { path, op: "diff", from, to, diffs: fastDiff(from, to) }
+  }
+  return { path, op: "replace", from, to }
+}
+
+// ── diffArray: per-element diff for two same-shape arrays ────────────────
+//
+// Special cases that fall back to full-array replace:
+//   - an empty-to-non-empty or non-empty-to-empty transition with
+//     non-primitive elements (in either side)
+//   - any modified position whose `a` or `b` is non-primitive
+//   - a length change where the head/tail overhang contains non-primitives
+//
+// Otherwise the per-element delta is structured as: deletes from the
+// tail (high index → low), per-position replaces (high → low), then
+// per-position adds (low → high), then appends to fill new length.
 function diffArray(a, b, path = "") {
+  // Empty-to-non-empty: per-index add unless any element is non-primitive.
+  if (a.length === 0 && b.length > 0) {
+    if (hasNonPrimitive(b)) return replaceOp(path, a, b)
+    return b.map((v, i) => ({ path: `${path}[${i}]`, to: v }))
+  }
+  // Non-empty-to-empty: per-index remove (high → low for stable indexing).
+  if (b.length === 0 && a.length > 0) {
+    const ops = []
+    for (let i = a.length - 1; i >= 0; i--) {
+      ops.push({ path: `${path}[${i}]`, op: "remove", from: a[i] })
+    }
+    return ops
+  }
+
+  // Find changed positions in the common prefix.
+  const commonLen = Math.min(a.length, b.length)
+  const modifications = []
+  for (let i = 0; i < commonLen; i++) {
+    if (!equals(a[i], b[i])) modifications.push(i)
+  }
+
+  // If any modified position has a non-primitive on either side, fall
+  // back to whole-array replace — partial diffs of nested objects/arrays
+  // within an array slot are too brittle.
+  for (const i of modifications) {
+    if (!isPrimitive(b[i]) || !isPrimitive(a[i])) return replaceOp(path, a, b)
+  }
+
+  // Length-change fallback: if the head/tail overhang carries any
+  // non-primitive, replace the whole array.
+  if (a.length !== b.length) {
+    const overhang = a.length < b.length
+      ? b.slice(a.length)
+      : a.slice(b.length)
+    if (hasNonPrimitive(overhang)) return replaceOp(path, a, b)
+  }
+
   const ops = []
 
-  if (a.length === 0 && b.length > 0) {
-    const hasComplex = b.some(v => is(Object, v) && v !== null)
-    if (hasComplex) {
-      return [{ path, op: "replace", from: a, to: b }]
-    }
-    for (let i = 0; i < b.length; i++) {
-      ops.push({ path: path + `[${i}]`, to: b[i] })
-    }
-    return ops
-  }
-
-  if (b.length === 0 && a.length > 0) {
-    for (let i = a.length - 1; i >= 0; i--) {
-      ops.push({ path: path + `[${i}]`, op: "remove", from: a[i] })
-    }
-    return ops
-  }
-
-  const commonLength = Math.min(a.length, b.length)
-  const modifications = []
-
-  for (let i = 0; i < commonLength; i++) {
-    if (!equals(a[i], b[i])) {
-      modifications.push(i)
-    }
-  }
-
-  const hasNonPrim = modifications.some(
-    i => (is(Object, b[i]) && b[i] !== null) || (is(Object, a[i]) && a[i] !== null),
-  )
-  if (hasNonPrim) {
-    return [{ path, op: "replace", from: a, to: b }]
-  }
-
-  if (a.length !== b.length) {
-    const tail = a.length < b.length ? b.slice(a.length) : []
-    const head = a.length > b.length ? a.slice(b.length) : []
-    const hasComplex = [...tail, ...head].some(
-      v => is(Object, v) && v !== null,
-    )
-    if (hasComplex) {
-      return [{ path, op: "replace", from: a, to: b }]
-    }
-  }
-
+  // Pass 1: tail removes (stable: high → low so prior indices don't shift).
   if (a.length > b.length) {
     for (let i = a.length - 1; i >= b.length; i--) {
-      ops.push({ path: path + `[${i}]`, op: "remove", from: a[i] })
+      ops.push({ path: `${path}[${i}]`, op: "remove", from: a[i] })
     }
   }
 
+  // Pass 2: per-position primitive changes (high → low).
   for (let i = modifications.length - 1; i >= 0; i--) {
     const idx = modifications[i]
-    const isPrimitive = !is(Object, b[idx]) || b[idx] === null
-
-    if (isPrimitive) {
-      if (shouldUseDiff(a[idx], b[idx])) {
-        ops.push({
-          path: path + `[${idx}]`,
-          op: "diff",
-          from: a[idx],
-          to: b[idx],
-          diffs: fastDiff(a[idx], b[idx]),
-        })
-      } else {
-        ops.push({
-          path: path + `[${idx}]`,
-          op: "replace",
-          from: a[idx],
-          to: b[idx],
-        })
-      }
+    if (isPrimitive(b[idx])) {
+      ops.push({ path: `${path}[${idx}]`, ...primitiveChangeOp("", a[idx], b[idx]) })
     } else {
-      ops.push({ path: path + `[${idx}]`, op: "remove", from: a[idx] })
+      ops.push({ path: `${path}[${idx}]`, op: "remove", from: a[idx] })
     }
   }
 
-  for (let i = 0; i < modifications.length; i++) {
-    const idx = modifications[i]
-    const isPrimitive = !is(Object, b[idx]) || b[idx] === null
-    if (!isPrimitive) {
-      ops.push({ path: path + `[${idx}]`, to: b[idx] })
+  // Pass 3: re-insert non-primitives at modified positions (low → high).
+  for (const idx of modifications) {
+    if (!isPrimitive(b[idx])) {
+      ops.push({ path: `${path}[${idx}]`, to: b[idx] })
     }
   }
 
+  // Pass 4: appends to grow the array.
   if (a.length < b.length) {
     for (let i = a.length; i < b.length; i++) {
-      ops.push({ path: path + `[${i}]`, to: b[i] })
+      ops.push({ path: `${path}[${i}]`, to: b[i] })
     }
   }
 
   return ops
 }
 
-const diff = (a, b, path = "", depth = 0) => {
-  let q = []
-  if (equals(a, b)) return q
+// ── diff: top-level recursive diff (objects/arrays/primitives) ───────────
+const diff = (a, b, path = "") => {
+  if (equals(a, b)) return []
 
-  if (!is(Object, a) || !is(Object, b)) {
+  // Primitive on either side → full replace (or string-diff if eligible).
+  if (isPrimitive(a) || isPrimitive(b)) {
     if (shouldUseDiff(a, b)) {
       return [{ path, op: "diff", from: a, to: b, diffs: fastDiff(a, b) }]
     }
-    return [{ path, op: "replace", from: a, to: b }]
+    return replaceOp(path, a, b)
   }
 
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return diffArray(a, b, path)
-  }
+  // Two arrays → per-element diff.
+  if (Array.isArray(a) && Array.isArray(b)) return diffArray(a, b, path)
 
-  if (Array.isArray(a) || Array.isArray(b)) {
-    return [{ path, op: "replace", from: a, to: b }]
-  }
+  // Array vs object (mixed types) → full replace.
+  if (Array.isArray(a) || Array.isArray(b)) return replaceOp(path, a, b)
 
-  // Object → empty {} transition: emit a replace rather than a sequence of
-  // deletes. Otherwise the artable's compactKeys() removes the parent key
-  // along with its drained sub-tree, leaving "key with empty-object value"
-  // indistinguishable from "no key at all" — fragile under subsequent
-  // updates.
+  // Object → empty {} transition: emit replace rather than per-key
+  // removes. Otherwise compactKeys() in the artable would drop the
+  // parent key along with its drained subtree, making "key with empty-
+  // object value" indistinguishable from "no key at all" — fragile
+  // under subsequent updates.
   if (Object.keys(b).length === 0 && Object.keys(a).length > 0) {
-    return [{ path, op: "replace", from: a, to: b }]
+    return replaceOp(path, a, b)
   }
 
-  const keys_a = keys(a)
-  const keys_b = keys(b)
-  const _keys = uniq([...keys_a, ...keys_b])
-  for (let v of _keys) {
-    let _path = path
-    if (_path !== "") _path += "."
-    _path += escapeKey(v)
+  // Per-key object diff: union of keys, dispatch per-key.
+  const allKeys = uniq([...keys(a), ...keys(b)])
+  const ops = []
+  for (const v of allKeys) {
+    const _path = path === "" ? escapeKey(v) : `${path}.${escapeKey(v)}`
     if (typeof a[v] === "undefined") {
-      q.push({ path: _path, op: "add", to: b[v] })
+      ops.push({ path: _path, op: "add", to: b[v] })
     } else if (typeof b[v] === "undefined") {
-      q.push({ path: _path, op: "remove", from: a[v] })
+      ops.push({ path: _path, op: "remove", from: a[v] })
     } else if (!equals(a[v], b[v])) {
-      q = q.concat(diff(a[v], b[v], _path, depth + 1))
+      const sub = diff(a[v], b[v], _path)
+      for (const op of sub) ops.push(op)
     }
   }
-  return q
+  return ops
 }
 
 function isNonStructural(v) {
