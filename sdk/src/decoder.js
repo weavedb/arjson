@@ -263,7 +263,24 @@ class Decoder {
           if (type === 7) {
             for (let i2 = 0; i2 < len; i2++) codes[i2] = Number(this.leb128())
           } else {
-            for (let i2 = 0; i2 < len; i2++) codes[i2] = base64_rev_byte[this.n(6)]
+            // Inline n(6) for hot 6-bit reads (one per base64 char).
+            const o = this.o
+            let c = this.c
+            for (let i2 = 0; i2 < len; i2++) {
+              const byteIdx = c >>> 3
+              const bitOff = c & 7
+              const w =
+                ((o[byteIdx] << 24) |
+                  ((o[byteIdx + 1] | 0) << 16) |
+                  ((o[byteIdx + 2] | 0) << 8) |
+                  (o[byteIdx + 3] | 0)) >>> 0
+              codes[i2] = base64_rev_byte[(w >>> (26 - bitOff)) & 0x3f]
+              c += 6
+            }
+            this.c = c
+            if (this.c > o.length * 8 + 64) {
+              throw new Error("ARJSON decoder: read past end of buffer")
+            }
           }
           // Use subarray to limit fromCharCode to the actual length
           // (scratch may be larger). For >16K chars, chunk to stay
@@ -646,7 +663,24 @@ class Decoder {
             }
             const klen = len - 1
             const codes = this._scratch(klen)
-            for (let i2 = 0; i2 < klen; i2++) codes[i2] = base64_rev_byte[this.n(6)]
+            // Inline n(6) — same pattern as getStrs.
+            const o = this.o
+            let c = this.c
+            for (let i2 = 0; i2 < klen; i2++) {
+              const byteIdx = c >>> 3
+              const bitOff = c & 7
+              const w =
+                ((o[byteIdx] << 24) |
+                  ((o[byteIdx + 1] | 0) << 16) |
+                  ((o[byteIdx + 2] | 0) << 8) |
+                  (o[byteIdx + 3] | 0)) >>> 0
+              codes[i2] = base64_rev_byte[(w >>> (26 - bitOff)) & 0x3f]
+              c += 6
+            }
+            this.c = c
+            if (c > o.length * 8 + 64) {
+              throw new Error("ARJSON decoder: read past end of buffer")
+            }
             this.keys.push(String.fromCharCode.apply(null, codes.subarray(0, klen)))
           }
         } else {
