@@ -1192,10 +1192,11 @@ function _encode(
     } else {
       const _prev = u.dcount
       pushPathNum(u, prev, 0, index)
-      let i = 0
-      for (const v2 of v) {
-        prev_type = _encode(v2, u, _prev, prev_type)
-        i++
+      // Index loop avoids the iterator object alloc + protocol calls
+      // of `for-of`. Drops unused `i++`.
+      const vlen = v.length
+      for (let vi = 0; vi < vlen; vi++) {
+        prev_type = _encode(v[vi], u, _prev, prev_type)
       }
     }
     return prev_type
