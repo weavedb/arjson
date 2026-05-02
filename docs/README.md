@@ -28,6 +28,11 @@ binary serialization formats.
   ARJSON's position in the binary-serialization landscape. What competes,
   what doesn't, and the gap ARJSON occupies.
 
+- [fuzz-testing.md](./fuzz-testing.md) —
+  Property-based fuzz testing methodology, the bugs it surfaced, and how
+  to run the bounded (`npm test`) and long-running (`npm run fuzz`)
+  fuzzers.
+
 ## Quick statement of contribution
 
 ARJSON is a self-describing, schemaless, deterministic binary encoding for

@@ -75,9 +75,6 @@ class Builder {
       const keys = []
       getKey(v, keys, obj)
       const val = getVal(i, obj)
-      if (Array.isArray(val.__val__) && val.__val__.length === 0) {
-        obj.arrs[v + 1] = true
-      }
       i++
 
       let json = _json

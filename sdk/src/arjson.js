@@ -140,6 +140,15 @@ const diff = (a, b, path = "", depth = 0) => {
     return [{ path, op: "replace", from: a, to: b }]
   }
 
+  // Object → empty {} transition: emit a replace rather than a sequence of
+  // deletes. Otherwise the artable's compactKeys() removes the parent key
+  // along with its drained sub-tree, leaving "key with empty-object value"
+  // indistinguishable from "no key at all" — fragile under subsequent
+  // updates.
+  if (Object.keys(b).length === 0 && Object.keys(a).length > 0) {
+    return [{ path, op: "replace", from: a, to: b }]
+  }
+
   const keys_a = keys(a)
   const keys_b = keys(b)
   const _keys = uniq([...keys_a, ...keys_b])
