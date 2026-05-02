@@ -12,7 +12,7 @@
 
 import { describe, it } from "node:test"
 import assert from "assert"
-import { equals } from "ramda"
+import { equals } from "../src/utils.js"
 import { ARJSON, enc, dec } from "../src/arjson.js"
 import { Encoder, Decoder, encode } from "../src/index.js"
 import { parsePath, escapeKey, getPrecision } from "../src/utils.js"

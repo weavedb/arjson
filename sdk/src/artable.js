@@ -1,8 +1,14 @@
-import { parsePath, escapeKey, bits } from "./utils.js"
+import { parsePath, escapeKey, bits, mergeLeft } from "./utils.js"
 import { Encoder, _encode, pushPathStr } from "./encoder.js"
 import { Decoder } from "./decoder.js"
 import { Builder, getVal } from "./builder.js"
-import { mergeLeft, includes, sortBy } from "ramda"
+
+// Tiny native replacements for the ramda helpers we used:
+const includes = (needle, haystack) => haystack.indexOf(needle) !== -1
+const sortBy = (keyFn, arr) => arr.slice().sort((a, b) => {
+  const ka = keyFn(a), kb = keyFn(b)
+  return ka < kb ? -1 : ka > kb ? 1 : 0
+})
 
 class ARTable {
   table() {

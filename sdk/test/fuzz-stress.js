@@ -17,7 +17,7 @@
 //   decoder-robust   — random bytes don't hang or crash
 //   all              — interleave all properties (default)
 
-import { equals } from "ramda"
+import { equals } from "../src/utils.js"
 import { ARJSON, enc, dec } from "../src/arjson.js"
 
 const args = process.argv.slice(2)

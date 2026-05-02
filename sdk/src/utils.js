@@ -278,6 +278,56 @@ function parsePathStrict(path) {
   return result
 }
 
+// ── Native replacements for ramda functions used in arjson/artable ──────
+
+// isObject(v): true for non-null objects (including arrays). Matches
+// ramda's `is(Object, v)` semantics.
+const isObject = v => typeof v === "object" && v !== null
+
+// equals(a, b): deep structural equality with primitive-strict matching.
+// Handles arrays, plain objects, dates, regexps, NaN. Does NOT do
+// special-case Map/Set/typed-array handling (matches the prior ramda
+// behavior that arjson relied on; full ramda parity not required).
+const equals = (a, b) => {
+  if (a === b) return true
+  if (typeof a !== typeof b) return false
+  if (a !== a && b !== b) return true  // both NaN
+  if (a === null || b === null) return false
+  if (typeof a !== "object") return false
+  const aArr = Array.isArray(a)
+  const bArr = Array.isArray(b)
+  if (aArr !== bArr) return false
+  if (aArr) {
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) {
+      if (!equals(a[i], b[i])) return false
+    }
+    return true
+  }
+  // Plain object — compare own enumerable keys.
+  const aKeys = Object.keys(a)
+  if (aKeys.length !== Object.keys(b).length) return false
+  for (const k of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(b, k)) return false
+    if (!equals(a[k], b[k])) return false
+  }
+  return true
+}
+
+// deepClone(v): JSON-friendly deep copy. Uses structuredClone when
+// available (Node 17+), otherwise falls back to JSON round-trip
+// (loses Date/regexp; matches the previous ramda.clone behavior for
+// the JSON-only data ARJSON encodes).
+const deepClone = typeof structuredClone === "function"
+  ? structuredClone
+  : v => JSON.parse(JSON.stringify(v))
+
+// mergeLeft(a, b): right-biased shallow merge — b's keys take precedence
+// when present, falling back to a's. Matches ramda's mergeLeft semantics
+// (the "left" is the priority side, which is `a` in ramda's argument
+// order). Only used for object-shaped tables in artable.compact.
+const mergeLeft = (a, b) => ({ ...b, ...a })
+
 export {
   parsePath,
   parsePathStrict,
@@ -294,4 +344,8 @@ export {
   strmap_rev,
   strmap_rev_byte,
   frombits,
+  isObject,
+  equals,
+  deepClone,
+  mergeLeft,
 }
