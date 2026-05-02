@@ -33,6 +33,11 @@ binary serialization formats.
   to run the bounded (`npm test`) and long-running (`npm run fuzz`)
   fuzzers.
 
+- [test-architecture.md](./test-architecture.md) —
+  How the 1,721-test suite is structured for optimization safety. Every
+  observable behavior is pinned down so encoder/decoder optimizations
+  are caught immediately if they break anything.
+
 ## Quick statement of contribution
 
 ARJSON is a self-describing, schemaless, deterministic binary encoding for
