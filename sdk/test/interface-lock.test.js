@@ -267,7 +267,7 @@ describe("interface lock: ARTable", () => {
     assert.equal(typeof t.getIndex, "function")
   })
 
-  it("ARTable.delta returns { delta, strmap }", () => {
+  it("ARTable.delta returns { delta }", () => {
     const a = new ARJSON({ json: { x: 1 } })
     const r = a.artable.delta("x", 2, "replace", 1, null)
     assert.ok(r !== null)

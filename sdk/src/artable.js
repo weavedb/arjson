@@ -423,9 +423,18 @@ class ARTable {
         pushPathStr(u, last, i)
       }
     }
-    const push = includes(op, ["delete", "diff", "replace"]) ? 1 : 0
+    // ARJSON internal op codes are aligned with JSON Patch RFC 6902:
+    // "add" — add new value at path
+    // "remove" — remove value at path
+    // "replace" — replace value at path
+    // "diff" — ARJSON-specific string-diff (not in RFC 6902)
+    // Of these, all but "add" set push=1 in the encoded delta.
+    const push = includes(op, ["remove", "diff", "replace"]) ? 1 : 0
     u.push_type(_encode(v, u, prev, null, index, push, diff))
-    return { delta: u.dump(), strmap: u.strMap }
+    // Note: previously also returned `strmap: u.strMap`. The only
+    // caller (ARJSON.update via this.load) reads only `.delta` and
+    // discards `.strmap`. Dropped from the return shape.
+    return { delta: u.dump() }
   }
   compactStrMap() {
     let strs = {}
