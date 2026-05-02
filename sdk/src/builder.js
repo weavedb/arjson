@@ -1,5 +1,34 @@
 import { decodeFastDiff, applyDecodedOps } from "./diff.js"
 
+// ── Build helpers (module-level so they aren't re-created per build) ──
+
+// type(k): for a build-key tuple [k0, k1, ...] derived from getKey,
+// return the container type at this position.
+//   k[0] === string  → 2 (string-keyed object)
+//   k[0] === 0       → 0 (array)
+//   k[0] === 1       → 1 (object)
+//   k[0] === 2       → 2 (string-ref before resolution)
+//   k[0] === null    → null (no-key root marker)
+const buildType = k => (typeof k[0] === "string" ? 2 : k[0])
+
+// init bucket helpers: which (bucket, slot) pairs in this build call
+// have already been initialized. Used to avoid re-creating the same
+// container twice in a single build pass when multiple vrefs share a
+// path. Bucket 0 = array slots, bucket 1 = object slots. Returns true
+// when the bucket key was actionable (i.e. fully specified k tuple).
+const buildSet = (k, init0, init1) => {
+  if (k && k[0] !== null && k[0] !== undefined && k[1] !== undefined) {
+    if (k[0] === 0) init0.add(k[1])
+    else init1.add(k[1])
+    return true
+  }
+  return false
+}
+const buildEx = (k, init0, init1) =>
+  k && k[0] !== null && k[0] !== undefined && k[1] !== undefined
+    ? k[0] === 0 ? init0.has(k[1]) : init1.has(k[1])
+    : false
+
 // Discriminated-union kinds for the value envelope produced by getVal.
 // Was previously a tagged-union of optional underscore-prefixed flags
 // (__val__, __del__, __merge__, __update__, __index__, __remove__).
@@ -291,19 +320,11 @@ class Builder {
     // front, so use Set rather than a fixed-size typed array.
     const init0 = new Set()
     const init1 = new Set()
-    const type = k => (typeof k[0] === "string" ? 2 : k[0])
-    const set = k => {
-      if (k && k[0] !== null && k[0] !== undefined && k[1] !== undefined) {
-        if (k[0] === 0) init0.add(k[1])
-        else init1.add(k[1])
-        return true
-      }
-      return false
-    }
-    const ex = k =>
-      k && k[0] !== null && k[0] !== undefined && k[1] !== undefined
-        ? k[0] === 0 ? init0.has(k[1]) : init1.has(k[1])
-        : false
+    // Local aliases to module-level helpers (closes over the per-call
+    // init buckets but otherwise is the same logic).
+    const type = buildType
+    const set = k => buildSet(k, init0, init1)
+    const ex = k => buildEx(k, init0, init1)
 
     // Reuse a single `keys` array across vref iterations — was a fresh
     // [] per iteration. For wide inputs this saves an allocation per
