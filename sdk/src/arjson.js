@@ -6,11 +6,17 @@ import { mergeLeft, uniq, keys, is, equals, concat } from "ramda"
 import fastDiff from "fast-diff"
 import { encodeFastDiff } from "./diff.js"
 
-export const enc = json => encode(json, new Encoder())
+// Shared singletons reused across calls to avoid Uint32Array reallocation
+// per call. Both `encode()` and `decode()` reset internal state at entry,
+// and JS's single-threaded execution model means a sync call can't be
+// interrupted by another sync call. Async/concurrent callers that want
+// isolation can construct their own Encoder/Decoder.
+const _sharedEnc = new Encoder()
+const _sharedDec = new Decoder()
+export const enc = json => encode(json, _sharedEnc)
 export const dec = arj => {
-  const d = new Decoder()
-  d.decode(arj)
-  return d.json
+  _sharedDec.decode(arj)
+  return _sharedDec.json
 }
 
 function shouldUseDiff(from, to) {
