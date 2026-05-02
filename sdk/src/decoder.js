@@ -668,12 +668,23 @@ class Decoder {
   build() {
     // Shared Builder instance — avoids per-decode allocation of
     // Builder + the Uint8Array buffers it owns for arrs/objs.
-    if (!this._builder) this._builder = new Builder(this.table())
-    else this._builder.setTable(this.table())
-    this.json = this._builder.build()
-    const artable = this._builder.table()
-    for (let k in artable) this[k] = artable[k]
-    if (this.c % 8 !== 0) this.c += 8 - (this.c % 8)
+    const b = this._builder ?? (this._builder = new Builder())
+    b.setTable(this.table())
+    this.json = b.build()
+    // Direct field copy — was `for (k in artable)` which is
+    // megamorphic (StoreIC_Megamorphic in profile). The set of fields
+    // is fixed and known.
+    this.strmap = b.strmap
+    this.strdiffs = b.strdiffs
+    this.ktypes = b.ktypes
+    this.vrefs = b.vrefs
+    this.krefs = b.krefs
+    this.vtypes = b.vtypes
+    this.nums = b.nums
+    this.strs = b.strs
+    this.bools = b.bools
+    this.keys = b.keys
+    if (this.c & 7) this.c += 8 - (this.c & 7)
     return this.json
   }
 }
