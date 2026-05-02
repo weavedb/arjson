@@ -106,6 +106,69 @@ const handleMiddleKey = (json, k, k2, type, set, ex) => {
   return json
 }
 
+// handleTerminalKey: the i2 === keys.length - 2 case in build's inner
+// loop — always exits after one of: setting/deleting a keyed value,
+// arr_pushing into a target slot, or descending into the last container
+// before applying val. Returns the new json (caller breaks out
+// regardless of return).
+const handleTerminalKey = (json, k, k2, val, obj, type, set, ex) => {
+  const jtype = Array.isArray(json) ? 0 : 1
+  const ctype = type(k)
+  const ntype = type(k2)
+
+  if (ctype === 0 && ntype === 0) {
+    if (!ex(k2) || k2[2] === true) {
+      set(k2)
+      json.push([])
+    }
+    json = json[json.length - 1]
+    arr_push(json, val, obj)
+    return json
+  }
+  if (ctype === 1 && ntype === 2) {
+    if (val.kind === KIND.DEL) delete json[k2[0]]
+    else {
+      if (k2[1] === true) for (const kk in json) delete json[kk[0]]
+      obj_merge(json, k2[0], val, obj)
+    }
+    return json
+  }
+  if (ctype === 2 && jtype === 1) {
+    if (ntype === 0) {
+      if (!Array.isArray(json[k[0]]) || k2?.[2] === true) json[k[0]] = []
+      json = json[k[0]]
+      arr_push(json, val, obj)
+      return json
+    }
+    if (ntype === 1) {
+      if (
+        typeof json[k[0]] !== "object" ||
+        json[k[0]] === null ||
+        Array.isArray(json[k[0]])
+      ) {
+        json[k[0]] = {}
+      }
+      return json[k[0]]
+    }
+    if (ntype === 2) {
+      if (
+        typeof json[k[0]] !== "object" ||
+        json[k[0]] === null ||
+        Array.isArray(json[k[0]])
+      ) {
+        json[k[0]] = {}
+      }
+      obj_merge(json[k[0]], k2[0], val, obj)
+      return json
+    }
+  }
+  if (ctype === 0 && ntype === 1) {
+    json.push({})
+    return json[json.length - 1]
+  }
+  return json
+}
+
 // Discriminated-union kinds for the value envelope produced by getVal.
 // Was previously a tagged-union of optional underscore-prefixed flags
 // (__val__, __del__, __merge__, __update__, __index__, __remove__).
@@ -549,63 +612,13 @@ class Builder {
           continue
         }
         if (i2 === keys.length - 2) {
-          const jtype = Array.isArray(json) ? 0 : 1
-          const ctype = type(k)
-          const k2 = keys[i2 + 1]
-          const ntype = type(k2)
-
-          if (ctype === 0 && ntype === 0) {
-            // Note: was guarded by `typeof val.__push__ === "undefined"`
-            // — that flag was never set anywhere, so the alternative
-            // branch was dead. Removed the dead branch, keeping the
-            // setup-then-arr_push path that was always taken.
-            if (!ex(k2) || k2[2] === true) {
-              set(k2)
-              json.push([])
-            }
-            json = json[json.length - 1]
-            arr_push(json, val, obj)
-            break
-          } else if (ctype === 1 && ntype === 2) {
-            if (val.kind === KIND.DEL) delete json[k2[0]]
-            else {
-              if (k2[1] === true) for (let kk in json) delete json[kk[0]]
-              obj_merge(json, k2[0], val, obj)
-            }
-            break
-          } else if (ctype === 2 && jtype === 1) {
-            if (ntype === 0) {
-              if (!Array.isArray(json[k[0]]) || k2?.[2] === true) {
-                json[k[0]] = []
-              }
-              json = json[k[0]]
-              arr_push(json, val, obj)
-            } else if (ntype === 1) {
-              if (
-                typeof json[k[0]] !== "object" ||
-                json[k[0]] === null ||
-                Array.isArray(json[k[0]])
-              ) {
-                json[k[0]] = {}
-              }
-              json = json[k[0]]
-              break
-            } else if (ntype === 2) {
-              if (
-                typeof json[k[0]] !== "object" ||
-                json[k[0]] === null ||
-                Array.isArray(json[k[0]])
-              ) {
-                json[k[0]] = {}
-              }
-              obj_merge(json[k[0]], k2[0], val, obj)
-            }
-            break
-          } else if (ctype === 0 && ntype === 1) {
-            json.push({})
-            json = json[json.length - 1]
-            break
-          }
+          // Terminal-key dispatch always exits the inner loop. The
+          // helper performs the action and returns the new json (which
+          // may have descended into a child container).
+          json = handleTerminalKey(
+            json, k, keys[i2 + 1], val, obj, type, set, ex,
+          )
+          break
         }
       }
       _json ??= json
