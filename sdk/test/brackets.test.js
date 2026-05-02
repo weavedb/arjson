@@ -1,207 +1,115 @@
 import { describe, it } from "node:test"
 import assert from "assert"
-import { parsePath } from "../src/utils.js"
-import { json, encode, Encoder, decode, Decoder, Parser } from "../src/index.js"
-import { delta } from "../src/parser.js"
+import { parsePath, escapeKey } from "../src/utils.js"
+import { ARJSON, enc, dec } from "../src/arjson.js"
 
-describe("Path Parser Bracket Fix", function () {
-  it("should correctly parse paths with brackets", () => {
-    console.log("\n=== Testing Path Parser with Brackets ===\n")
-
-    // Test helper
-    const testPath = (path, expected, description) => {
-      console.log(`Testing: ${description}`)
-      console.log(`  Path: "${path}"`)
-      const result = parsePath(path)
-      console.log(`  Result:`, result)
-      console.log(`  Expected:`, expected)
-      assert.deepEqual(result, expected, `Failed: ${description}`)
-      console.log("  ✓ Passed\n")
-    }
-
-    // Test cases for path parsing
-    console.log("=== Basic Path Parsing ===")
-
-    testPath("user.name", ["user", "name"], "Simple dot notation")
-
-    testPath("array[0]", ["array", 0], "Array with numeric index")
-
-    testPath(
-      "array[42].item",
-      ["array", 42, "item"],
-      "Array index in middle of path",
-    )
-
-    console.log("=== Brackets in Key Names ===")
-
-    testPath("user[admin]", ["user[admin]"], "Key with non-numeric brackets")
-
-    // Note: This is a limitation - numeric content in brackets is always treated as array index
-    console.log("Testing: Key with year in brackets")
-    console.log('  Path: "data[2020]"')
-    console.log("  Result:", parsePath("data[2020]"))
-    console.log(
-      '  Expected: ["data[2020]"] (as key) but got ["data", 2020] (as array)',
-    )
-    console.log(
-      "  ⚠️  LIMITATION: Numeric brackets are always treated as array indices\n",
-    )
-
-    testPath(
-      "key[with]brackets",
-      ["key[with]brackets"],
-      "Key with brackets in middle",
-    )
-
-    testPath(
-      "user[admin].role",
-      ["user[admin]", "role"],
-      "Key with brackets followed by dot notation",
-    )
-
-    testPath(
-      "config[prod][eu-west]",
-      ["config[prod][eu-west]"],
-      "Multiple bracket pairs in key",
-    )
-
-    console.log("=== Mixed Cases ===")
-
-    testPath(
-      "data.items[0].meta[tag]",
-      ["data", "items", 0, "meta[tag]"],
-      "Mix of array index and bracket in key",
-    )
-
-    testPath(
-      "key.with.dots[notIndex].array[5]",
-      ["key", "with", "dots[notIndex]", "array", 5],
-      "Complex path with both types of brackets",
-    )
-
-    testPath(
-      "[leadingBracket",
-      ["[leadingBracket"],
-      "Unclosed bracket treated as part of key",
-    )
-
-    testPath(
-      "trailing]bracket",
-      ["trailing]bracket"],
-      "Closing bracket without opening",
-    )
-
-    console.log("=== Empty and Edge Cases ===")
-
-    testPath("", [], "Empty path")
-
-    testPath(".", [], "Just a dot")
-
-    testPath("...", [], "Multiple dots")
-
-    testPath("[0]", [0], "Just array index")
-
-    testPath("[]", ["[]"], "Empty brackets treated as key")
-
-    console.log("=== Path Parser Summary ===\n")
-    console.log("✅ Fixed:")
-    console.log("  • Keys with non-numeric brackets work (e.g., user[admin])")
-    console.log("  • Mixed paths with arrays and bracket keys work")
-    console.log(
-      "  • Multiple non-numeric brackets work (e.g., config[prod][eu])",
-    )
-    console.log("")
-    console.log("⚠️  Remaining Limitation:")
-    console.log(
-      "  • Keys with numeric brackets are ambiguous (e.g., data[2020])",
-    )
-    console.log(
-      "  • Parser assumes numeric = array index, non-numeric = part of key",
-    )
-    console.log(
-      "  • Workaround: Avoid numeric values in brackets for key names",
-    )
-    console.log("")
+describe("parsePath", () => {
+  it("parses simple dot/bracket paths", () => {
+    assert.deepEqual(parsePath(""), [])
+    assert.deepEqual(parsePath("user.name"), ["user", "name"])
+    assert.deepEqual(parsePath("array[0]"), ["array", 0])
+    assert.deepEqual(parsePath("array[42].item"), ["array", 42, "item"])
+    assert.deepEqual(parsePath("[0]"), [0])
   })
 
-  it("should handle delta updates with bracket keys", () => {
-    console.log("\n=== Testing Delta Updates with Bracket Keys ===\n")
+  it("treats brackets with non-numeric content as part of the key", () => {
+    assert.deepEqual(parsePath("user[admin]"), ["user[admin]"])
+    assert.deepEqual(parsePath("key[with]brackets"), ["key[with]brackets"])
+    assert.deepEqual(parsePath("user[admin].role"), ["user[admin]", "role"])
+    assert.deepEqual(parsePath("config[prod][eu-west]"), [
+      "config[prod][eu-west]",
+    ])
+  })
 
-    const testDelta = (from, to, description) => {
-      console.log(`Testing: ${description}`)
-      console.log("  From:", JSON.stringify(from))
-      console.log("  To:  ", JSON.stringify(to))
+  it("treats brackets with numeric content as array indices unless escaped", () => {
+    assert.deepEqual(parsePath("data[2020]"), ["data", 2020])
+    assert.deepEqual(parsePath("data\\[2020\\]"), ["data[2020]"])
+    assert.deepEqual(parsePath("a.b\\[2020\\].c"), ["a", "b[2020]", "c"])
+  })
 
-      try {
-        // Test using Parser directly
-        let d = new Decoder()
-        let u = new Encoder()
-        const encoded = encode(from, u)
-        decode(encoded, d)
-        let p = new Parser(d.cols())
-        const { len, q } = delta(from, to)
-        const deltaBytes = u._dump(q)
-        const res = p.update(encoded, deltaBytes, len)
+  it("handles unclosed/unmatched brackets as literal characters", () => {
+    assert.deepEqual(parsePath("[leadingBracket"), ["[leadingBracket"])
+    assert.deepEqual(parsePath("trailing]bracket"), ["trailing]bracket"])
+    assert.deepEqual(parsePath("[]"), ["[]"])
+  })
 
-        assert.deepEqual(res.json, to, `Failed: ${description}`)
-        console.log("  ✓ Delta update successful\n")
-      } catch (e) {
-        console.log("  ✗ Error:", e.message)
-        console.log(
-          "  Note: This may still be a limitation in the delta system\n",
-        )
-      }
+  it("collapses bare dot separators", () => {
+    assert.deepEqual(parsePath("."), [])
+    assert.deepEqual(parsePath("..."), [])
+  })
+})
+
+describe("escapeKey", () => {
+  it("escapes brackets and backslashes only", () => {
+    assert.equal(escapeKey("plain"), "plain")
+    assert.equal(escapeKey("data[2020]"), "data\\[2020\\]")
+    assert.equal(escapeKey("a\\b"), "a\\\\b")
+    assert.equal(escapeKey("a.b"), "a.b")
+  })
+
+  it("round-trips with parsePath as a single key segment", () => {
+    for (const key of [
+      "data[2020]",
+      "user[admin]",
+      "config[prod][eu]",
+      "x\\y",
+      "plain",
+    ]) {
+      assert.deepEqual(parsePath(escapeKey(key)), [key])
     }
+  })
+})
 
-    console.log("=== Delta Updates with Bracket Keys ===")
+describe("ARJSON delta updates with bracket keys", () => {
+  const roundTrip = (json) => new ARJSON({ arj: new ARJSON({ json }).toBuffer() }).json
 
-    testDelta(
-      { normal: 1 },
-      { normal: 1, "key[bracket]": 2 },
-      "Adding key with brackets",
-    )
-
-    testDelta(
-      { "user[admin]": true, "user[guest]": false },
-      { "user[admin]": false, "user[guest]": true },
-      "Modifying values with bracket keys",
-    )
-
-    // Note: Keys like data[2020] won't work as expected
-    console.log("Testing: Keys with numeric brackets")
-    console.log("  ⚠️  LIMITATION: Keys like 'data[2020]' are ambiguous")
-    console.log(
-      "  The parser treats [2020] as array index, not part of key name",
-    )
-    console.log(
-      "  Workaround: Use different naming like 'data_2020' or 'data.year2020'\n",
-    )
-
-    testDelta(
+  it("encodes/decodes objects with bracket keys", () => {
+    const cases = [
+      { "user[admin]": true },
+      { "data[2020]": 100, "data[2021]": 200 },
       { "config[prod][eu]": "active" },
-      { "config[prod][eu]": "inactive" },
-      "Multiple brackets in key (non-numeric)",
-    )
+      { normal: 1, "key[bracket]": 2 },
+    ]
+    for (const c of cases) assert.deepEqual(roundTrip(c), c)
+  })
 
-    // Test mixed scenarios
-    testDelta(
-      {
-        normal: 1,
-        array: [1, 2, 3],
-        "key[bracket]": "value",
-      },
-      {
-        normal: 2,
-        array: [1, 2, 4],
-        "key[bracket]": "updated",
-      },
-      "Mixed update with arrays and bracket keys",
-    )
+  it("delta-updates values at bracket keys", () => {
+    const a = new ARJSON({ json: { "user[admin]": false, "user[guest]": false } })
+    a.update({ "user[admin]": true, "user[guest]": false })
+    assert.deepEqual(a.json, { "user[admin]": true, "user[guest]": false })
+    assert.deepEqual(new ARJSON({ arj: a.toBuffer() }).json, a.json)
+  })
 
-    console.log("=== Delta Update Tests Complete ===\n")
-    console.log(
-      "Note: If delta updates still fail, it may be due to the _calcDiff",
-    )
-    console.log("function creating paths that the query system can't handle.\n")
+  it("delta-updates values at numeric-bracket keys (Bug 2 fix)", () => {
+    const a = new ARJSON({ json: { "data[2020]": 100 } })
+    a.update({ "data[2020]": 200 })
+    assert.deepEqual(a.json, { "data[2020]": 200 })
+    assert.deepEqual(new ARJSON({ arj: a.toBuffer() }).json, { "data[2020]": 200 })
+  })
+
+  it("adds new bracket keys via delta", () => {
+    const a = new ARJSON({ json: { normal: 1 } })
+    a.update({ normal: 1, "key[bracket]": 2 })
+    assert.deepEqual(a.json, { normal: 1, "key[bracket]": 2 })
+  })
+
+  it("deletes bracket keys via delta", () => {
+    const a = new ARJSON({ json: { "user[a]": 1, "user[b]": 2 } })
+    a.update({ "user[a]": 1 })
+    assert.deepEqual(a.json, { "user[a]": 1 })
+  })
+
+  it("handles mixed paths: arrays + bracket keys at the same level", () => {
+    const a = new ARJSON({
+      json: { items: [1, 2, 3], "key[x]": "v1" },
+    })
+    a.update({ items: [1, 2, 4], "key[x]": "v2" })
+    assert.deepEqual(a.json, { items: [1, 2, 4], "key[x]": "v2" })
+  })
+
+  it("handles bracket keys nested inside objects", () => {
+    const a = new ARJSON({ json: { x: { "data[2020]": 100 } } })
+    a.update({ x: { "data[2020]": 200 } })
+    assert.deepEqual(a.json, { x: { "data[2020]": 200 } })
   })
 })

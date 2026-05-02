@@ -248,7 +248,7 @@ class Builder {
             }
           } else if (jtype === 0 && ctype === 0) {
             if (ntype === 0) {
-              if (!ex(k2) || k2[2] === true) {
+              if ((!ex(k2) || k2[2] === true) && obj.arrs[k2[3]] !== true) {
                 set(k2)
                 json.push([])
                 json = json[json.length - 1]
@@ -257,14 +257,11 @@ class Builder {
                 json.length > 0 &&
                 !Array.isArray(json[json.length - 1])
               ) {
-                set(k2)
                 json.push([])
                 json = json[json.length - 1]
               } else if (json && json.length > 0) {
-                set(k2)
                 json = json[json.length - 1]
               } else if (json) {
-                set(k2)
                 json.push([])
                 json = json[json.length - 1]
               }
@@ -370,7 +367,7 @@ const getKey = (i, keys, obj) => {
   }
   if (i > 1) {
     const d = obj.krefs[i - 2]
-    if (d > 0) getKey(d, keys, obj)
+    if (d > 0) getKey(obj.krefs[d - 1], keys, obj)
   }
   let i2 = 0
   for (let k of keys) {

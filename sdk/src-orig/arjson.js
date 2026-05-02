@@ -1,7 +1,6 @@
 import { Encoder, encode } from "./encoder.js"
 import { Decoder } from "./decoder.js"
 import { ARTable } from "./artable.js"
-import { escapeKey } from "./utils.js"
 import { mergeLeft, uniq, keys, is, equals, concat } from "ramda"
 import fastDiff from "fast-diff"
 import { encodeFastDiff } from "./diff.js"
@@ -28,10 +27,6 @@ function diffArray(a, b, path = "") {
   const ops = []
 
   if (a.length === 0 && b.length > 0) {
-    const hasComplex = b.some(v => is(Object, v) && v !== null)
-    if (hasComplex) {
-      return [{ path, op: "replace", from: a, to: b }]
-    }
     for (let i = 0; i < b.length; i++) {
       ops.push({ path: path + `[${i}]`, to: b[i] })
     }
@@ -51,24 +46,6 @@ function diffArray(a, b, path = "") {
   for (let i = 0; i < commonLength; i++) {
     if (!equals(a[i], b[i])) {
       modifications.push(i)
-    }
-  }
-
-  const hasNonPrim = modifications.some(
-    i => (is(Object, b[i]) && b[i] !== null) || (is(Object, a[i]) && a[i] !== null),
-  )
-  if (hasNonPrim) {
-    return [{ path, op: "replace", from: a, to: b }]
-  }
-
-  if (a.length !== b.length) {
-    const tail = a.length < b.length ? b.slice(a.length) : []
-    const head = a.length > b.length ? a.slice(b.length) : []
-    const hasComplex = [...tail, ...head].some(
-      v => is(Object, v) && v !== null,
-    )
-    if (hasComplex) {
-      return [{ path, op: "replace", from: a, to: b }]
     }
   }
 
@@ -146,7 +123,7 @@ const diff = (a, b, path = "", depth = 0) => {
   for (let v of _keys) {
     let _path = path
     if (_path !== "") _path += "."
-    _path += escapeKey(v)
+    _path += v
     if (typeof a[v] === "undefined") {
       q.push({ path: _path, op: "new", to: b[v] })
     } else if (typeof b[v] === "undefined") {
@@ -156,13 +133,6 @@ const diff = (a, b, path = "", depth = 0) => {
     }
   }
   return q
-}
-
-function isNonStructural(v) {
-  if (v === null) return true
-  if (typeof v !== "object") return true
-  if (Array.isArray(v)) return v.length === 0
-  return Object.keys(v).length === 0
 }
 
 export class ARJSON {
@@ -176,10 +146,8 @@ export class ARJSON {
     } else if (arj) {
       this.deltas = ARJSON.fromBuffer(arj)
       d.decode(this.deltas[0])
-      const table = d.table()
-      if (d.single) table.single = d.json
-      this.artable = new ARTable(table)
-      this.json = d.single ? d.json : this.artable.build()
+      this.artable = new ARTable(d.table())
+      this.json = this.artable.build()
       if (this.deltas.length > 0) {
         for (const v of this.deltas.slice(1)) {
           ;({ json } = this.artable.update(v))
@@ -190,9 +158,7 @@ export class ARJSON {
       this.json = json
       arj = enc(json)
       d.decode(arj)
-      const table = d.table()
-      if (d.single) table.single = d.json
-      this.artable = new ARTable(table)
+      this.artable = new ARTable(d.table())
       this.deltas = [arj]
     }
   }
@@ -200,43 +166,36 @@ export class ARJSON {
     return this.artable.table()
   }
   update(json) {
-    if (isNonStructural(this.json) && !equals(this.json, json)) {
-      return this.reanchor(json)
-    }
     let deltas = []
     const diffs = diff(this.json, json)
     for (const v of diffs) {
-      let _diff =
+      let diff =
         v.op === "diff" ? encodeFastDiff(v.diffs, this.artable.strmap) : null
-      if (v.path === "") {
-        return this.reanchor(json)
-      }
       if (
-        v.op === "replace" &&
-        is(Object, v.to) &&
-        v.to !== null
+        v.path === "" &&
+        (!is(Object, v.from) ||
+          !is(Object, v.to) ||
+          Array.isArray(v.from) ||
+          Array.isArray(v.to))
       ) {
-        return this.reanchor(json)
+        const u = new Encoder()
+        u.reset(this.artable.strmap)
+        const newArj = encode(json, u, null, this.artable.strmap)
+        deltas.push(newArj)
+        this.deltas.push(newArj)
+        const d = new Decoder()
+        d.decode(newArj, null, this.artable.strmap)
+        this.artable.strmap = mergeLeft(u.strMap, this.artable.strmap)
+        this.json = d.json
+        this.artable.strmap = this.artable.strmap
+        continue
       }
       const delta = this.load(
-        this.artable.delta(v.path, v.to, v.op, 1, _diff).delta,
+        this.artable.delta(v.path, v.to, v.op, 1, diff).delta,
       )
       deltas.push(delta)
     }
     return deltas
-  }
-  reanchor(json) {
-    const fresh = enc(json)
-    const d = new Decoder()
-    d.decode(fresh)
-    const table = d.table()
-    if (d.single) table.single = d.json
-    this.artable = new ARTable(table)
-    this.json = d.json
-    this.deltas = [fresh]
-    this.buflen = 0
-    delete this.cache
-    return [fresh]
   }
   load(delta) {
     this.json = this.artable.update(delta).json

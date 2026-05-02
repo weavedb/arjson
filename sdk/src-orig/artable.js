@@ -1,4 +1,4 @@
-import { parsePath, escapeKey, bits, frombits } from "./utils.js"
+import { parsePath, bits, frombits } from "./utils.js"
 import { Encoder, _encode, pushPathStr } from "./encoder.js"
 import { Decoder } from "./decoder.js"
 import { Builder, getVal } from "./builder.js"
@@ -6,7 +6,7 @@ import { mergeLeft, includes, sortBy } from "ramda"
 
 class ARTable {
   table() {
-    const t = {
+    return {
       vrefs: this.vrefs,
       krefs: this.krefs,
       ktypes: this.ktypes,
@@ -18,8 +18,6 @@ class ARTable {
       strmap: this.strmap,
       strdiffs: this.strdiffs,
     }
-    if ("single" in this) t.single = this.single
-    return t
   }
 
   constructor({
@@ -33,7 +31,6 @@ class ARTable {
     krefs,
     strmap,
     strdiffs,
-    single,
   }) {
     this.strmap = strmap
     this.ktypes = ktypes
@@ -45,7 +42,6 @@ class ARTable {
     this.bools = bools
     this.keys = keys
     this.strdiffs = strdiffs
-    if (typeof single !== "undefined") this.single = single
     this.compactStrMap()
     this.buildMap()
   }
@@ -263,7 +259,7 @@ class ARTable {
         }
         if (type === "str") {
           if (path !== "") path += "."
-          path += escapeKey(k)
+          path += k
           this.kmap[p].path = path
         } else if (this.kmap[_prev]?.type === "arr") {
           path += `[${this.kmap[p].index}]`
@@ -315,7 +311,7 @@ class ARTable {
       const v = paths[i]
       if (typeof v === "string") {
         if (i !== 0) _path += "."
-        _path += escapeKey(v)
+        _path += v
       } else _path += `[${v}]`
     }
     return _path
@@ -417,7 +413,6 @@ class ARTable {
   }
 
   build() {
-    if ("single" in this) return this.single
     return new Builder(this.table()).build()
   }
 
