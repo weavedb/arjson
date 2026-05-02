@@ -96,9 +96,13 @@ class Builder {
         ? k[0] === 0 ? init0.has(k[1]) : init1.has(k[1])
         : false
 
+    // Reuse a single `keys` array across vref iterations — was a fresh
+    // [] per iteration. For wide inputs this saves an allocation per
+    // vref. Truncating with length=0 keeps the backing capacity.
+    const keys = []
     for (let vi = 0; vi < obj.vrefs.length; vi++) {
       const v = obj.vrefs[vi]
-      const keys = []
+      keys.length = 0
       getKey(v, keys, obj)
       const val = getVal(i, obj)
       i++
