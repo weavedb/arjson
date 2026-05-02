@@ -1,10 +1,18 @@
 import { Encoder, encode } from "./encoder.js"
 import { Decoder } from "./decoder.js"
 import { ARTable } from "./artable.js"
-import { escapeKey, parsePath } from "./utils.js"
-import { mergeLeft, uniq, keys, is, equals, concat, clone } from "ramda"
+import { escapeKey, parsePath, equals, isObject, deepClone } from "./utils.js"
 import fastDiff from "fast-diff"
 import { encodeFastDiff } from "./diff.js"
+
+// Tiny native helpers replacing the ramda functions we used:
+//   uniq(arr)  → Array.from(new Set(arr))
+//   keys(obj)  → Object.keys(obj)
+//   is(Object, v) → typeof v === "object" && v !== null  (exposed as isObject)
+//   equals(a, b) → utils.equals (deep, NaN-aware, primitive-strict)
+//   clone(v)   → utils.deepClone (structuredClone fallback)
+const uniq = arr => Array.from(new Set(arr))
+const is = (ctor, v) => ctor === Object ? isObject(v) : v instanceof ctor
 
 // ── path helpers for explicit move/copy/test ops ──────────────────────────
 
@@ -213,7 +221,7 @@ const diff = (a, b, path = "") => {
   }
 
   // Per-key object diff: union of keys, dispatch per-key.
-  const allKeys = uniq([...keys(a), ...keys(b)])
+  const allKeys = uniq([...Object.keys(a), ...Object.keys(b)])
   const ops = []
   for (const v of allKeys) {
     const _path = path === "" ? escapeKey(v) : `${path}.${escapeKey(v)}`
@@ -313,7 +321,7 @@ export class ARJSON {
     if (fromVal === undefined) {
       throw new Error(`ARJSON.move: path ${from} not found`)
     }
-    const next = clone(this.json)
+    const next = deepClone(this.json)
     setByPath(next, parsePathSafe(to), fromVal)
     deleteByPath(next, parsePathSafe(from))
     return this.update(next)
@@ -324,7 +332,7 @@ export class ARJSON {
     if (fromVal === undefined) {
       throw new Error(`ARJSON.copy: path ${from} not found`)
     }
-    const next = clone(this.json)
+    const next = deepClone(this.json)
     setByPath(next, parsePathSafe(to), fromVal)
     return this.update(next)
   }

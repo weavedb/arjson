@@ -18,7 +18,7 @@
 
 import { describe, it } from "node:test"
 import assert from "assert"
-import { equals } from "ramda"
+import { equals } from "../src/utils.js"
 import { ARJSON, enc, dec } from "../src/arjson.js"
 
 // ─── seeded PRNG (mulberry32) ──────────────────────────────────────────────

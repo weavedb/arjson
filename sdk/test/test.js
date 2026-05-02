@@ -1,6 +1,11 @@
 import { describe, it } from "node:test"
 import assert from "assert"
-import { range } from "ramda"
+// Native replacement for ramda.range — was the only ramda usage in tests.
+const range = (start, end) => {
+  const out = []
+  for (let i = start; i < end; i++) out.push(i)
+  return out
+}
 import { ARJSON, enc, dec } from "../src/arjson.js"
 import { Encoder, Decoder, encode } from "../src/index.js"
 import { createJSON } from "./utils.js"
