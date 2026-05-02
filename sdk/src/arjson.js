@@ -1,64 +1,16 @@
 import { Encoder, encode } from "./encoder.js"
 import { Decoder } from "./decoder.js"
 import { ARTable } from "./artable.js"
-import { escapeKey, parsePath, equals, isObject, deepClone } from "./utils.js"
+import { escapeKey, equals, isObject } from "./utils.js"
 import fastDiff from "fast-diff"
 import { encodeFastDiff } from "./diff.js"
 
 // Tiny native helpers replacing the ramda functions we used:
 //   uniq(arr)  → Array.from(new Set(arr))
-//   keys(obj)  → Object.keys(obj)
 //   is(Object, v) → typeof v === "object" && v !== null  (exposed as isObject)
 //   equals(a, b) → utils.equals (deep, NaN-aware, primitive-strict)
-//   clone(v)   → utils.deepClone (structuredClone fallback)
 const uniq = arr => Array.from(new Set(arr))
 const is = (ctor, v) => ctor === Object ? isObject(v) : v instanceof ctor
-
-// ── path helpers for explicit move/copy/test ops ──────────────────────────
-
-const parsePathSafe = path => parsePath(path)
-
-const getByPath = (json, segments) => {
-  let cur = json
-  for (const seg of segments) {
-    if (cur === null || cur === undefined) return undefined
-    cur = cur[seg]
-  }
-  return cur
-}
-
-const setByPath = (json, segments, val) => {
-  if (segments.length === 0) return val
-  let cur = json
-  for (let i = 0; i < segments.length - 1; i++) {
-    const seg = segments[i]
-    const next = segments[i + 1]
-    if (cur[seg] === null || cur[seg] === undefined) {
-      // Auto-create container based on next segment's type:
-      // numeric → array, string → object.
-      cur[seg] = typeof next === "number" ? [] : {}
-    }
-    cur = cur[seg]
-  }
-  cur[segments[segments.length - 1]] = val
-  return json
-}
-
-const deleteByPath = (json, segments) => {
-  if (segments.length === 0) return
-  let cur = json
-  for (let i = 0; i < segments.length - 1; i++) {
-    if (cur === null || cur === undefined) return
-    cur = cur[segments[i]]
-  }
-  if (cur === null || cur === undefined) return
-  const last = segments[segments.length - 1]
-  if (typeof last === "number" && Array.isArray(cur)) {
-    cur.splice(last, 1)
-  } else {
-    delete cur[last]
-  }
-}
 
 // Shared singletons reused across calls to avoid Uint32Array reallocation
 // per call. Both `encode()` and `decode()` reset internal state at entry,
@@ -305,59 +257,6 @@ export class ARJSON {
     return deltas
   }
 
-  // ── Explicit op API ─────────────────────────────────────────────────────
-  //
-  // These methods let callers express RFC 6902 operations directly,
-  // bypassing the diff algorithm. Useful when:
-  //   - You know the exact operation you want and don't need the diff
-  //     pass to discover it (saves CPU)
-  //   - You want optimistic-concurrency check via .test()
-  //
-  // For move/copy, the wire encoding is currently a translation to the
-  // existing primitives. A v2 wire format would emit these as single
-  // ops with from-path + to-path and no value re-emission.
-  move(from, to) {
-    const fromVal = getByPath(this.json, parsePathSafe(from))
-    if (fromVal === undefined) {
-      throw new Error(`ARJSON.move: path ${from} not found`)
-    }
-    const next = deepClone(this.json)
-    setByPath(next, parsePathSafe(to), fromVal)
-    deleteByPath(next, parsePathSafe(from))
-    return this.update(next)
-  }
-
-  copy(from, to) {
-    const fromVal = getByPath(this.json, parsePathSafe(from))
-    if (fromVal === undefined) {
-      throw new Error(`ARJSON.copy: path ${from} not found`)
-    }
-    const next = deepClone(this.json)
-    setByPath(next, parsePathSafe(to), fromVal)
-    return this.update(next)
-  }
-
-  // test(path, expected) — JSON Patch RFC 6902 test op. Verifies the
-  // current value at `path` deep-equals `expected`. Throws if mismatch.
-  // Does NOT mutate state and does NOT append to the delta chain. Use
-  // this as an optimistic-concurrency precondition before update():
-  //
-  //   arj.test("user.role", "admin")  // throws if user.role isn't admin
-  //   arj.update({ ...user, lastSeen: Date.now() })
-  //
-  // A future v2 wire format could persist test ops in the chain so
-  // replayers verify preconditions during reconstruction. This v1.1
-  // implementation is synchronous-check-only (chain stays unchanged).
-  test(path, expected) {
-    const actual = getByPath(this.json, parsePathSafe(path))
-    if (!equals(actual, expected)) {
-      throw new Error(
-        `ARJSON.test: path ${path} expected ${JSON.stringify(expected)}, ` +
-        `got ${JSON.stringify(actual)}`,
-      )
-    }
-    return true
-  }
   reanchor(json) {
     const fresh = enc(json)
     const d = new Decoder()
