@@ -8,8 +8,9 @@
   "scripts": {
     "build:cjs": "babel src --out-dir dist/cjs --config-file ./.babelrc-cjs",
     "build": "rm -rf dist && npm run build:cjs && cp src -rf dist/esm && node make.js && cp .npmignore dist/",
-    "test": "node --test test/test.js test/delta.js test/edge-cases.js test/brackets.test.js test/modular.test.js test/regression.test.js test/extension-gate.test.js",
-    "test-only": "node --test-only test/test.js test/delta.js test/edge-cases.js test/brackets.test.js test/modular.test.js test/regression.test.js test/extension-gate.test.js"
+    "test": "node --test test/test.js test/delta.js test/edge-cases.js test/brackets.test.js test/modular.test.js test/regression.test.js test/extension-gate.test.js test/fuzz.test.js test/golden.test.js test/unit.test.js test/api.test.js test/matrix.test.js",
+    "test-only": "node --test-only test/test.js test/delta.js test/edge-cases.js test/brackets.test.js test/modular.test.js test/regression.test.js test/extension-gate.test.js test/fuzz.test.js test/golden.test.js test/unit.test.js test/api.test.js test/matrix.test.js",
+    "fuzz": "node --expose-gc test/fuzz-stress.js"
   },
   "exports": {
     ".": {

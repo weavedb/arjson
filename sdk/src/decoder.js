@@ -12,12 +12,19 @@ class Decoder {
     let result = 0
     for (let i = 0; i < len; i++) {
       const bitPos = this.c + i
-      const byteIndex = Math.floor(bitPos / 8)
-      const bitIndex = 7 - (bitPos % 8)
+      const byteIndex = bitPos >> 3
+      const bitIndex = 7 - (bitPos & 7)
       const bit = (this.o[byteIndex] >> bitIndex) & 1
       result = (result << 1) | bit
     }
     this.c += len
+    // Trip-wire: detect runaway over-read on malformed input. Legitimate
+    // decoding may zero-extend a few bits past the end during boundary
+    // alignment, but advancing far past the buffer means we're in an
+    // unbounded loop reading implicit zeros.
+    if (this.c > this.o.length * 8 + 64) {
+      throw new Error("ARJSON decoder: read past end of buffer")
+    }
     return result
   }
 
@@ -148,6 +155,12 @@ class Decoder {
       const dataBytes = Math.ceil(totalBits / 8)
       const totalBytes = varintBytes + dataBytes
 
+      // Bound allocation: a string diff can't be larger than the buffer.
+      // Malformed input could otherwise request multi-GB Uint8Array.
+      if (totalBytes > this.o.length) {
+        throw new Error("ARJSON decoder: strdiff length exceeds buffer")
+      }
+
       this.c = startPos
       const diffData = new Uint8Array(totalBytes)
 
@@ -160,6 +173,7 @@ class Decoder {
   }
   getStrs() {
     let val = null
+    const maxBits = this.o.length * 8
     for (let _type of this.vtypes) {
       let type = Array.isArray(_type) ? _type[3] : _type
       if (Array.isArray(type)) type = type[2]
@@ -170,6 +184,11 @@ class Decoder {
           if (stype === 0) this.strs.push([this.short()])
           else this.strs.push([-1, this.dc++])
         } else {
+          // Each char takes ≥ 6 bits; reject lengths that can't fit in
+          // the remaining buffer.
+          if (len > maxBits) {
+            throw new Error("ARJSON decoder: string length exceeds buffer")
+          }
           val = ""
           for (let i2 = 0; i2 < len; i2++) {
             if (type === 7) val += String.fromCharCode(Number(this.leb128()))
@@ -239,6 +258,12 @@ class Decoder {
   }
 
   getVflags() {
+    // Bound allocation: each flag is 1 bit, so this.len can't exceed remaining
+    // buffer bits. Throw on malformed input that claims a longer run.
+    const maxBits = this.o.length * 8 - this.c
+    if (this.len > maxBits) {
+      throw new Error("ARJSON decoder: vflags length exceeds remaining buffer")
+    }
     let i = 0
     while (i < this.len) {
       const flag = this.n(1)
@@ -248,8 +273,13 @@ class Decoder {
   }
 
   getKflags() {
+    const need = this.key_length - 1 - this.keylen
+    const maxBits = this.o.length * 8 - this.c
+    if (need > maxBits) {
+      throw new Error("ARJSON decoder: kflags length exceeds remaining buffer")
+    }
     let i = 0
-    while (i < this.key_length - 1 - this.keylen) {
+    while (i < need) {
       const flag = this.n(1)
       this.kflags.push(flag)
       i++
@@ -259,12 +289,16 @@ class Decoder {
   getKrefs() {
     let i = 0
     let prev = 0
-    while (i < this.kflags.length) {
+    const flagsLen = this.kflags.length
+    while (i < flagsLen) {
       if (this.kflags[i] === 1) {
         let val = this.n(3)
 
         if (val === 0) {
           let len = this.short()
+          if (len > flagsLen - i) {
+            throw new Error("ARJSON decoder: krefs run-length exceeds remaining flags")
+          }
           val = this.n(3)
           let i3 = i
           for (let i2 = 0; i2 < len; i2++) {
@@ -285,6 +319,9 @@ class Decoder {
 
         if (val === 0) {
           let len = this.short()
+          if (len > flagsLen - i) {
+            throw new Error("ARJSON decoder: krefs run-length exceeds remaining flags")
+          }
           val = this.n(this.kcount)
           let i3 = i
           for (let i2 = 0; i2 < len; i2++) {
@@ -326,11 +363,15 @@ class Decoder {
   getVrefs() {
     let i = 0
     let prev = 0
-    while (i < this.vflags.length) {
+    const flagsLen = this.vflags.length
+    while (i < flagsLen) {
       if (this.vflags[i] === 1) {
         let val = this.n(3)
         if (val === 0) {
           let len = this.short()
+          if (len > flagsLen - i) {
+            throw new Error("ARJSON decoder: vrefs run-length exceeds remaining flags")
+          }
           val = this.n(3)
           let i3 = i
           for (let i2 = 0; i2 < len; i2++) {
@@ -382,6 +423,9 @@ class Decoder {
             else this.vtypes.push([2, index, remove, type3])
           } else if (type2 === 0) this.vtypes.push(0)
         } else {
+          if (count > len - i) {
+            throw new Error("ARJSON decoder: vtypes run-length exceeds remaining slots")
+          }
           i += count - 1
           let type2 = this.n(3)
           for (let i2 = 0; i2 < count; i2++) this.vtypes.push(type2)
@@ -481,6 +525,7 @@ class Decoder {
   getKeys() {
     let arr = 0
     let obj = 0
+    const maxBits = this.o.length * 8
     for (let i = 0; i < this.ktypes.length; i++) {
       const [type, len] = this.ktypes[i]
       if (type < 2) this.keys.push(type === 0 ? arr++ : obj++)
@@ -488,6 +533,9 @@ class Decoder {
         if (type === 2) {
           if (len === 0) this.keys.push([this.short()])
           else {
+            if (len > maxBits) {
+              throw new Error("ARJSON decoder: key length exceeds buffer")
+            }
             let key = ""
             for (let i2 = 0; i2 < len - 1; i2++) key += base64_rev[this.n(6)]
             this.keys.push(key)
@@ -495,6 +543,9 @@ class Decoder {
         } else {
           if (len === 2) this.keys.push("")
           else {
+            if (len > maxBits) {
+              throw new Error("ARJSON decoder: key length exceeds buffer")
+            }
             let key = ""
             for (let i2 = 0; i2 < len - 1; i2++) {
               key += String.fromCharCode(Number(this.leb128()))

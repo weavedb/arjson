@@ -2,7 +2,7 @@
 
 ## Status
 
-All four bugs originally tracked in this report have been fixed, plus nine additional encoder/decoder/builder bugs uncovered while building the regression suite. JavaScript test suite: **472 tests passing**, including ~85K iterations of seeded property-based fuzz across multiple depths and shape distributions.
+All four bugs originally tracked in this report have been fixed, plus twelve additional encoder/decoder/builder bugs uncovered while building the regression and fuzz suites. JavaScript test suite: **502 tests passing**, including bounded property-based fuzz (~85K iterations) and a separate stress runner (`npm run fuzz`) for long-running checks at 35K iter/s on decoder robustness.
 
 ## Fixes
 
@@ -67,6 +67,18 @@ The build loop's create-vs-navigate branches used `obj.arrs[k2[3]] !== true` to 
 
 ### 13. `ARJSON({table})` lost primitive root values
 A primitive root (`42`, `"x"`, `true`, `[]`, `{}`, etc.) gets a single-mode encoding whose decoded `table()` is empty in every column. The `{table}` constructor then called `build()` on the empty table and got `null` back, regardless of the original value. Fix: thread an optional `single` field through `decoder.table()` → `ARTable` constructor → `ARTable.build()`, and have the `{json}`/`{arj}`/`reanchor()` paths populate it when `decoder.single` is true. The primitive value is now preserved across `{table}` reconstructions. `sdk/src/arjson.js`, `sdk/src/artable.js`.
+
+### 14. Decoder hung on malformed bit-streams
+`n(len)` returned implicit zero bits for reads past the buffer end. The kcount/vcount-grow loops in `getKrefs`/`getVrefs` then spun forever. Surfaced by fuzz testing on iter 6 of seed 0xBADD. **Fix:** trip-wire in `n()` that throws when the cursor advances >64 bits past the buffer end. `sdk/src/decoder.js`.
+
+### 15. Empty-object value lost during delta when chained with key additions
+When an object's value transitioned from `{...}` to `{}` via deletes, `compactKeys()` removed the parent key (no remaining vrefs through it). Subsequent updates that added new keys elsewhere then lost the empty-object value. Surfaced by mutation-chain fuzzing. **Fix:** in `diff()`, "object becomes empty" emits a `replace` op rather than a sequence of deletes — preserves the empty-container marker through compaction. `sdk/src/arjson.js`.
+
+### 16. Empty-array element followed by non-empty array merged into one
+The builder's line `obj.arrs[v + 1] = true` incorrectly marked the next sibling's position as "already initialized." `[[], [1]]` round-tripped to `[[1]]`. Surfaced by round-trip fuzzing. **Fix:** removed the line; the empty-array marker is handled correctly by the existing val-handling logic. `sdk/src/builder.js`.
+
+### Decoder allocation bounds (DoS hardening)
+Malformed input could request multi-gigabyte allocations before the trip-wire fired: `getStrDiffs` LEB128 length could trigger 32 TB `new Uint8Array(N)` requests; `getKrefs`/`getVrefs`/`getVtypes` run-length values could push billions of array entries; `getKeys`/`getStrs` could build huge strings. **Fix:** size-sanity guards in each loop that throw when a claimed length exceeds remaining buffer bits. After these fixes, decoder-robust fuzzing runs at 35K iter/s with stable heap. `sdk/src/decoder.js`.
 
 ## Non-issues (working as designed, follow JSON spec)
 
