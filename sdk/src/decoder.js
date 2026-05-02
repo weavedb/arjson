@@ -88,8 +88,11 @@ class Decoder {
     this.bc = 0
     this.len = 0
     this.str_len = 0
-    this.strmap = strmap ?? {}
-    this.str_rev = {}
+    // Use Object.create(null) to avoid prototype-chain lookups; V8
+    // also has a slight specialization for these. Still emits plain
+    // object via table() — backward compatible.
+    this.strmap = strmap ?? Object.create(null)
+    this.str_rev = Object.create(null)
     for (let k in strmap) {
       this.str_len++
       this.str_rev[strmap[k]] = k
