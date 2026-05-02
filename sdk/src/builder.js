@@ -386,8 +386,12 @@ class Builder {
 
 const getKey = (i, keys, obj) => {
   // Walk the kref chain leaf-to-root iteratively, then reverse —
-  // avoids unshift's O(n²) per-call cost.
-  const chain = []
+  // avoids unshift's O(n²) per-call cost. Tracks a flag for whether
+  // any type-2 (strmap-ref) key was added; if not, skip the resolve
+  // post-pass entirely (most chains for primitive arrays/objects).
+  // Reuse a chain stack on obj across calls.
+  const chain = obj._chain ?? (obj._chain = [])
+  chain.length = 0
   let cur = i
   while (true) {
     chain.push(cur)
@@ -401,12 +405,16 @@ const getKey = (i, keys, obj) => {
     break
   }
   // Emit in root-to-leaf order.
+  let hasRef = false
+  const baseLen = keys.length
   for (let n = chain.length - 1; n >= 0; n--) {
     const ci = chain[n]
     const k = obj.keys[ci - 1]
     if (typeof k === "undefined") keys.push([null])
-    else if (Array.isArray(k)) keys.push([2, k[0], undefined, ci])
-    else if (typeof k === "number") {
+    else if (Array.isArray(k)) {
+      keys.push([2, k[0], undefined, ci])
+      hasRef = true
+    } else if (typeof k === "number") {
       const reset = obj.arrs[ci] === 0
       if (reset) obj.arrs[ci] = 1
       keys.push([obj.ktypes[ci - 1][0], k, reset, ci])
@@ -416,18 +424,17 @@ const getKey = (i, keys, obj) => {
       keys.push([k, undefined, reset, ci])
     }
   }
-  // Resolve type-2 (strmap reference) keys to strings, using the leaf
-  // index `i` for the obj.objs marker (preserves prior behavior).
-  const klen = keys.length
-  for (let i2 = 0; i2 < klen; i2++) {
-    const k = keys[i2]
-    if (Array.isArray(k) && k[0] === 2) {
-      const reset = obj.objs[i] === 0
-      if (reset) obj.objs[i] = 1
-      // strmap is keyed by stringified int; V8 stores numeric-keyed
-      // properties in elements storage, so direct int indexing works
-      // without the toString() string allocation.
-      keys[i2] = [obj.strmap[k[1]], undefined, reset, i]
+  // Resolve type-2 (strmap reference) keys to strings only if any
+  // were emitted. Skip the loop entirely otherwise.
+  if (hasRef) {
+    const klen = keys.length
+    for (let i2 = baseLen; i2 < klen; i2++) {
+      const k = keys[i2]
+      if (Array.isArray(k) && k[0] === 2) {
+        const reset = obj.objs[i] === 0
+        if (reset) obj.objs[i] = 1
+        keys[i2] = [obj.strmap[k[1]], undefined, reset, i]
+      }
     }
   }
 }
