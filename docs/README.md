@@ -80,10 +80,10 @@ fit.
 | Pipeline                                      | bytes |
 | --------------------------------------------- | ----: |
 | 50 documents × `json + brotli` (per document) | 5,336 |
-| 50 documents × `arjson + brotli`              | 5,100 |
-| ARJSON delta chain (raw)                      | 3,585 |
-| **ARJSON delta chain + zstd**                 | **684** |
+| 50 documents × `arjson + brotli` (v1.1)       | 5,081 |
+| ARJSON v1.1 delta chain (raw)                 | 3,618 |
+| **ARJSON v1.1 delta chain + zstd**            | **671** |
 
-ARJSON+zstd on the delta chain is **7.8× smaller than json+brotli per-document**,
+ARJSON+zstd on the delta chain is **8× smaller than json+brotli per-document**,
 preserves every historical state, and is byte-for-byte deterministic across
 encoders that pin the implementation version.

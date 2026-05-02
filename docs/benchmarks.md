@@ -67,29 +67,32 @@ generated user records with predictable variation (`bench-beat-json-brotli.js`).
 | JSON                   | 41,348  |  100.0% |    146.6%  |
 | MessagePack            | 28,195  |   68.2% |    100.0%  |
 | CBOR (cbor-x)          | 29,365  |   71.0% |    104.1%  |
-| ARJSON                 | 17,654  |   42.7% |     62.6%  |
+| ARJSON v1.0            | 17,654  |   42.7% |     62.6%  |
+| **ARJSON v1.1**        | **17,075** | **41.3%** | **60.6%**  |
 
-ARJSON is **37% smaller than MessagePack** and **40% smaller than CBOR**
-overall. Per-workload, ARJSON wins on 24/34, ties on 5, loses by 1–2
-bytes on 5 (all sub-10-byte payloads).
+ARJSON v1.1 is **39% smaller than MessagePack** and **42% smaller than
+CBOR** overall. Per-workload, ARJSON wins on 24/34, ties on 5, loses
+by 1–2 bytes on 5 (all sub-10-byte payloads).
 
-Where ARJSON's lead is largest, in size-vs-MessagePack:
+Where ARJSON's lead is largest (v1.1 sizes, vs MessagePack):
 
 | Workload              | ARJSON / msgpack |
 | --------------------- | ---------------: |
-| `arr_int_1000`        |             5.3% |
-| `arr_str_100_homog`   |            15.2% |
-| `arr_null_100`        |            18.4% |
-| `arr_int_100`         |            21.4% |
-| `arr_bool_100`        |            30.1% |
-| `redundant_users`     |            33.3% |
-| `arr_obj_100_homog`   |            45.2% |
+| `arr_int_1000`        |             0.5% |
+| `arr_int_100`         |             9.7% |
+| `arr_str_100_homog`   |            13.8% |
+| `arr_null_100`        |             6.8% |
+| `arr_bool_100`        |            18.4% |
+| `bool_array_500`      |            14.3% |
+| `redundant_users`     |            31.2% |
+| `arr_obj_100_homog`   |            44.0% |
 | `float_array_100`     |            46.5% |
 | `wide_500`            |            56.9% |
 
 These are the workloads that exercise ARJSON's strongest features:
 delta-pack on sequential numbers, strmap dedup on repeated strings,
-type-pack on homogeneous arrays, columnar dedup on shape-repeated objects.
+type-pack on homogeneous arrays, columnar dedup on shape-repeated
+objects, and (new in v1.1) RLE on boolean-valued columns.
 
 ## Results: speed (encode/decode time)
 
@@ -142,15 +145,15 @@ the script), with various pipelines.
 | ----------------------------------------- | ----: | -----------: |
 | json (raw)                                | 7,134 |       133.7% |
 | json + brotli                             | 5,336 |       100.0% |
-| arjson (raw)                              | 4,900 |        91.8% |
-| arjson + brotli                           | 5,100 |        95.6% |
-| arjson + zstd                             | 5,550 |       104.0% |
-| arjson + zstd + trained dict              | 5,550 |       104.0% |
-| arjson + zstd + self-strmap-as-dict       | 5,550 |       104.0% |
-| arjson + brotli + strmap-prefix (sim)     | 6,706 |       125.7% |
+| **arjson v1.1 (raw)**                     | **4,881** |    **91.5%** |
+| arjson v1.1 + brotli                      | 5,081 |        95.2% |
+| arjson v1.1 + zstd                        | 5,531 |       103.7% |
+| arjson v1.1 + zstd + trained dict         | 5,531 |       103.7% |
+| arjson v1.1 + zstd + self-strmap-as-dict  | 5,531 |       103.7% |
+| arjson v1.1 + brotli + strmap-prefix (sim)| 6,722 |       126.0% |
 
 Even raw ARJSON beats `json + brotli` per-document on this homogeneous
-corpus (91.8%). Adding a downstream compressor doesn't help much because
+corpus (91.5%). Adding a downstream compressor doesn't help much because
 ARJSON has already extracted most redundancy. The trained-dictionary
 result equals the no-dict result, confirming that ARJSON's strmap is
 already serving the dictionary's role inline.
@@ -159,13 +162,13 @@ already serving the dictionary's role inline.
 
 | Pipeline                                  | bytes |   vs json+br |
 | ----------------------------------------- | ----: | -----------: |
-| arjson DELTA chain (raw)                  | 3,585 |        67.2% |
-| arjson DELTA + brotli                     |   710 |        13.3% |
-| arjson DELTA + zstd                       |   684 |        12.8% |
-| arjson DELTA + zstd + trained dict        |   692 |        13.0% |
-| arjson DELTA + zstd + self-strmap         |   684 |        12.8% |
+| arjson v1.1 DELTA chain (raw)             | 3,618 |        67.8% |
+| arjson v1.1 DELTA + brotli                |   664 |        12.4% |
+| arjson v1.1 DELTA + zstd                  |   671 |        12.6% |
+| arjson v1.1 DELTA + zstd + trained dict   |   667 |        12.5% |
+| arjson v1.1 DELTA + zstd + self-strmap    |   671 |        12.6% |
 
-The delta chain compresses to **~14 bytes per document state**, ~7.8×
+The delta chain compresses to **~13 bytes per document state**, ~8×
 smaller than json+brotli per-document. The zstd-with-self-strmap row
 matches the no-dict row because, again, ARJSON has already done the
 dictionary work inline.
@@ -199,8 +202,8 @@ a general compressor can achieve.
 | --------------------------------- | ----: |
 | json (concat)                     | 41,348 |
 | **json (concat) + brotli**        | **4,158** |
-| arjson (concat)                   | 17,654 |
-| arjson (concat) + brotli          |  4,669 |
+| arjson v1.1 (concat)              | 17,075 |
+| arjson v1.1 (concat) + brotli     |  4,605 |
 | msgpack (concat) + brotli         |  4,741 |
 | cbor (concat) + brotli            |  4,807 |
 

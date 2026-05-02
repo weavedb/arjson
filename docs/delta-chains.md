@@ -50,16 +50,16 @@ snapshot-based encoding for the same history.
 Empirical comparison (50 user records mutated incrementally; full results
 in [benchmarks.md](./benchmarks.md)):
 
-| Storage of 50 historical states                 |  bytes | bytes/state |
-| ----------------------------------------------- | -----: | ----------: |
-| 50 full encodes (`json + brotli` per snapshot)  |  5,336 |        ~107 |
-| 50 full encodes (`arjson + brotli` per snapshot) |  5,100 |        ~102 |
-| ARJSON delta chain (raw)                        |  3,585 |        ~71  |
-| ARJSON delta chain + brotli                     |    710 |        ~14  |
-| ARJSON delta chain + zstd                       |    684 |        ~14  |
+| Storage of 50 historical states                  |  bytes | bytes/state |
+| ------------------------------------------------ | -----: | ----------: |
+| 50 full encodes (`json + brotli` per snapshot)   |  5,336 |        ~107 |
+| 50 full encodes (`arjson v1.1 + brotli` per snap) |  5,081 |        ~102 |
+| ARJSON v1.1 delta chain (raw)                    |  3,618 |        ~72  |
+| ARJSON v1.1 delta chain + brotli                 |    664 |        ~13  |
+| ARJSON v1.1 delta chain + zstd                   |    671 |        ~13  |
 
-The ARJSON delta chain stores **all 50 historical states** in 684 bytes —
-14 bytes per state amortized — and can reconstruct any prior state by
+The ARJSON delta chain stores **all 50 historical states** in 664 bytes —
+13 bytes per state amortized — and can reconstruct any prior state by
 replaying deltas. The snapshot pipelines store only the latest state at
 ≥100 bytes per copy if all history is to be retained.
 
