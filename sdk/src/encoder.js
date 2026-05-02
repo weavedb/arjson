@@ -1193,7 +1193,28 @@ function _encode(
       }
       if (is64) {
         ktype = 2
-        for (let i = 0; i < len; i++) u.add_vals(base64_byte[v.charCodeAt(i)], 6)
+        // Inline add_vals(c, 6) — same pattern as pushPathStr.
+        const need = ((len * 6 + 31) >> 5) + (u.vals_len >> 5) + 1
+        while (need >= u.vals.length) u._grow()
+        let vlen = u.vals_len
+        const vals = u.vals
+        for (let i = 0; i < len; i++) {
+          const val = base64_byte[v.charCodeAt(i)]
+          const used = vlen & 31
+          const free = 32 - used
+          const idx = vlen >>> 5
+          if (free >= 6) {
+            if (used === 0) vals[idx] = val
+            else vals[idx] = ((vals[idx] << 6) | val) >>> 0
+          } else {
+            const high = val >>> (6 - free)
+            if (used === 0) vals[idx] = high
+            else vals[idx] = ((vals[idx] << free) | high) >>> 0
+            vals[idx + 1] = val & ((1 << (6 - free)) - 1)
+          }
+          vlen += 6
+        }
+        u.vals_len = vlen
       } else {
         for (let i = 0; i < len; i++) u.leb128_2_vals(v.charCodeAt(i))
       }
