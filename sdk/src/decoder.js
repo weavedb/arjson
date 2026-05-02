@@ -304,7 +304,7 @@ class Decoder {
           this.json = -n
         }
       } else if (code < 61) {
-        this.json = strmap_rev[(code - 9).toString()]
+        this.json = strmap_rev[code - 9]
       } else if (code === 61) {
         this.json = String.fromCharCode(Number(this.leb128()))
       } else if (code === 62) {

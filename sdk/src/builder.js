@@ -416,7 +416,10 @@ const getKey = (i, keys, obj) => {
     if (Array.isArray(k) && k[0] === 2) {
       const reset = obj.objs[i] === 0
       if (reset) obj.objs[i] = 1
-      keys[i2] = [obj.strmap[k[1].toString()], undefined, reset, i]
+      // strmap is keyed by stringified int; V8 stores numeric-keyed
+      // properties in elements storage, so direct int indexing works
+      // without the toString() string allocation.
+      keys[i2] = [obj.strmap[k[1]], undefined, reset, i]
     }
   }
 }
@@ -427,7 +430,7 @@ const get = (obj, type) => {
     let str = obj.strs[obj.sc++]
     if (Array.isArray(str)) {
       if (str[0] === -1) str = obj.strdiffs[str[1]]
-      else str = obj.strmap[str[0].toString()]
+      else str = obj.strmap[str[0]]
     }
     val = str
   } else if (type === 4) val = obj.nums[obj.nc++]

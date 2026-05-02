@@ -241,7 +241,7 @@ class ARTable {
         let type = null
         let k = this.keys[p - 1]
         if (Array.isArray(k) && k.length === 1 && typeof k[0] === "number") {
-          k = this.strmap[k[0].toString()]
+          k = this.strmap[k[0]]
         }
         if (Array.isArray(k)) type = "op"
         else if (typeof k === "number")
