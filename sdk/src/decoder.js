@@ -1,6 +1,14 @@
 import { strmap_rev, base64_rev, base64_rev_byte, bits } from "./utils.js"
 import { Builder } from "./builder.js"
 
+// Precomputed pow10 table. Decoding floats does `int / Math.pow(10, n)`
+// where n is small (precision, typically ≤ 20). Math.pow goes through
+// a slow path for non-integer second arg — even for integer second arg
+// it dispatches to a generic exponentiation routine. Direct table
+// lookup is much faster.
+const POW10 = new Float64Array(310)
+for (let i = 0; i < 310; i++) POW10[i] = Math.pow(10, i)
+
 class Decoder {
   constructor() {
     this.c = 0
@@ -290,7 +298,7 @@ class Decoder {
           const moved = this.uint()
           const n = this.uint()
           const neg = code === 7 ? 1 : -1
-          this.json = (n / Math.pow(10, moved)) * neg
+          this.json = (n / (moved < 310 ? POW10[moved] : Math.pow(10, moved))) * neg
         } else {
           const n = this.uint()
           this.json = -n
@@ -602,7 +610,9 @@ class Decoder {
             const int = this.dint(prev)
             prev = int
             const neg = num === 0 ? 1 : -1
-            this.nums.push((int / Math.pow(10, moved - 1)) * neg)
+            const m1 = moved - 1
+            const denom = m1 < 310 ? POW10[m1] : Math.pow(10, m1)
+            this.nums.push((int / denom) * neg)
           } else {
             const moved = num > 4 ? num - 4 : num
             const neg = num > 4 ? -1 : 1
@@ -610,7 +620,9 @@ class Decoder {
             else {
               const int = this.dint(prev)
               prev = int
-              this.nums.push((int / Math.pow(10, moved - 1)) * neg)
+              const m1 = moved - 1
+              const denom = m1 < 310 ? POW10[m1] : Math.pow(10, m1)
+              this.nums.push((int / denom) * neg)
             }
           }
         }

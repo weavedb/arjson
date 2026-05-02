@@ -1,6 +1,10 @@
 import diff from "fast-diff"
 import { getPrecision, bits, tobits, strmap, strmap_byte, base64, base64_byte } from "./utils.js"
 
+// Precomputed pow10 lookup; matches the decoder's table.
+const POW10 = new Float64Array(310)
+for (let i = 0; i < 310; i++) POW10[i] = Math.pow(10, i)
+
 class Encoder {
   constructor(n = 1) {
     this._initArrays(n)
@@ -1005,7 +1009,7 @@ function encode(v, u, query, strmap) {
         u.add_dc(0, 1)
         u.add_dc(type + 1, 6)
         u.uint_dc(moved)
-        u.uint_dc(Math.round((v < 0 ? -v : v) * Math.pow(10, moved)))
+        u.uint_dc(Math.round((v < 0 ? -v : v) * (moved < 310 ? POW10[moved] : Math.pow(10, moved))))
       }
     } else if (typeof v === "string") {
       u.add_dc(0, 1)
@@ -1094,7 +1098,7 @@ function _encode(
     } else {
       u.push_float(v < 0, moved + 1)
       if (moved > 2) u.push_int(moved + 1)
-      u.push_int(Math.round((v < 0 ? -v : v) * Math.pow(10, moved)))
+      u.push_int(Math.round((v < 0 ? -v : v) * (moved < 310 ? POW10[moved] : Math.pow(10, moved))))
     }
     _pt[0] = type; _pt[1] = index; _pt[2] = push
     return _pt
