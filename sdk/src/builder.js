@@ -46,6 +46,10 @@ class Builder {
     // structuredClone was a deep copy of all columns, multi-MB on big
     // inputs. Shallow object reference is correct and dramatically cheaper.
     const t = this.table()
+    // Use Sets for arrs/objs (was plain objects keyed by integer i).
+    // Plain-object dictionary keys grew with input size and forced
+    // V8 into dictionary mode (LoadIC_Megamorphic in profile). Set has
+    // no hidden-class dehydration concern.
     const obj = {
       vrefs: t.vrefs,
       krefs: t.krefs,
@@ -57,8 +61,8 @@ class Builder {
       strs: t.strs,
       strmap: t.strmap,
       strdiffs: t.strdiffs,
-      arrs: {},
-      objs: {},
+      arrs: new Set(),
+      objs: new Set(),
       nc: 0,
       bc: 0,
       sc: 0,
@@ -71,19 +75,24 @@ class Builder {
     }
 
     let i = 0
-    const init = [[], []]
+    // init is a 2-bucket Set table — bucket 0 (arrays) and 1 (objects).
+    // Was `[[], []]` (2 sparse arrays), which megamorphosed under V8.
+    // Sets keep predictable shape and use bucket * 1e9 + key as the
+    // composite key (i is a small int; multiplier separates the buckets).
+    const init0 = new Set()
+    const init1 = new Set()
     const type = k => (typeof k[0] === "string" ? 2 : k[0])
     const set = k => {
       if (k && k[0] !== null && k[0] !== undefined && k[1] !== undefined) {
-        init[k[0]][k[1]] = true
+        if (k[0] === 0) init0.add(k[1])
+        else init1.add(k[1])
         return true
       }
       return false
     }
-
     const ex = k =>
       k && k[0] !== null && k[0] !== undefined && k[1] !== undefined
-        ? init[k[0]][k[1]] === true
+        ? k[0] === 0 ? init0.has(k[1]) : init1.has(k[1])
         : false
 
     for (let vi = 0; vi < obj.vrefs.length; vi++) {
@@ -385,18 +394,12 @@ const getKey = (i, keys, obj) => {
     if (typeof k === "undefined") keys.push([null])
     else if (Array.isArray(k)) keys.push([2, k[0], undefined, ci])
     else if (typeof k === "number") {
-      let reset = false
-      if (obj.arrs[ci] !== true) {
-        reset = true
-        obj.arrs[ci] = true
-      }
+      const reset = !obj.arrs.has(ci)
+      if (reset) obj.arrs.add(ci)
       keys.push([obj.ktypes[ci - 1][0], k, reset, ci])
     } else {
-      let reset = false
-      if (obj.objs[ci] !== true) {
-        reset = true
-        obj.objs[ci] = true
-      }
+      const reset = !obj.objs.has(ci)
+      if (reset) obj.objs.add(ci)
       keys.push([k, undefined, reset, ci])
     }
   }
@@ -406,11 +409,8 @@ const getKey = (i, keys, obj) => {
   for (let i2 = 0; i2 < klen; i2++) {
     const k = keys[i2]
     if (Array.isArray(k) && k[0] === 2) {
-      let reset = false
-      if (obj.objs[i] !== true) {
-        reset = true
-        obj.objs[i] = true
-      }
+      const reset = !obj.objs.has(i)
+      if (reset) obj.objs.add(i)
       keys[i2] = [obj.strmap[k[1].toString()], undefined, reset, i]
     }
   }
