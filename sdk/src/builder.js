@@ -84,44 +84,66 @@ class Builder {
       return r.__val__
     }
 
-    // Fast path: flat array of primitives at root.
-    // Detect: all vrefs equal, the root parent has no kref chain
-    // (krefs[parent-2] is undefined or 0), root ktype is array, all
-    // vtypes are primitive (not Array, not delta marker).
+    // Fast paths: flat array of primitives, flat object of primitives.
+    // Both bypass the conditional inner loop and pre-allocate the
+    // result for direct index/key writes.
     if (obj.vrefs.length >= 2) {
-      const root = obj.vrefs[0]
-      let isFlat = root >= 1
-      if (isFlat) {
-        // Root must be top level (no parent chain).
-        const parentRef = obj.krefs[root - 2]
-        if (parentRef !== undefined && parentRef > 0) isFlat = false
-      }
-      if (isFlat) {
-        const rootKt = obj.ktypes[root - 1]
-        if (!rootKt || rootKt[0] !== 0) isFlat = false
-      }
-      if (isFlat) {
-        const _vrefs = obj.vrefs
-        const _vtypes = obj.vtypes
-        const _vlen = _vrefs.length
+      const _vrefs = obj.vrefs
+      const _vtypes = obj.vtypes
+      const _vlen = _vrefs.length
+      const root = _vrefs[0]
+
+      // ── Try flat array path ────────────────────────────────────
+      const rootKt = root >= 1 ? obj.ktypes[root - 1] : null
+      if (rootKt && rootKt[0] === 0 && (obj.krefs[root - 2] | 0) === 0) {
+        let allFlat = true
         for (let vi = 0; vi < _vlen; vi++) {
-          if (_vrefs[vi] !== root) { isFlat = false; break }
+          if (_vrefs[vi] !== root) { allFlat = false; break }
           const vt = _vtypes[vi]
-          // 1=null, 3=bool, 4=pos int, 5=neg int, 7=str. Reject 2
-          // (string-ref, has special handling) and arrays/markers.
           if (vt !== 1 && vt !== 3 && vt !== 4 && vt !== 5 && vt !== 7) {
-            isFlat = false; break
+            allFlat = false; break
           }
         }
-      }
-      if (isFlat) {
-        const _vlen = obj.vrefs.length
-        const out = new Array(_vlen)
-        for (let vi = 0; vi < _vlen; vi++) {
-          const r = getVal(vi, obj)
-          out[vi] = r.__val__
+        if (allFlat) {
+          const out = new Array(_vlen)
+          for (let vi = 0; vi < _vlen; vi++) {
+            out[vi] = getVal(vi, obj).__val__
+          }
+          return out
         }
-        return out
+      }
+
+      // ── Try flat object path ───────────────────────────────────
+      // Object root: ktypes[0] = [1]. Keys are string-typed (ktype 2).
+      // krefs all point to root. vrefs sequential pointing to each key.
+      if (rootKt && rootKt[0] === 1 && (obj.krefs[root - 2] | 0) === 0) {
+        const _krefs = obj.krefs
+        let allFlat = _vlen === _krefs.length
+        for (let i = 0; i < _krefs.length && allFlat; i++) {
+          if (_krefs[i] !== root) { allFlat = false; break }
+        }
+        if (allFlat) {
+          for (let vi = 0; vi < _vlen; vi++) {
+            const vt = _vtypes[vi]
+            if (vt !== 1 && vt !== 3 && vt !== 4 && vt !== 5 && vt !== 7) {
+              allFlat = false; break
+            }
+            // Skip type-2 string-ref keys (they need strmap resolve).
+            const keyEntry = obj.keys[vi + 1]
+            if (typeof keyEntry !== "string") { allFlat = false; break }
+            // Verify key ktype is direct string (type 2 in ktypes), not
+            // an int/array marker.
+            const kt = obj.ktypes[vi + 1]
+            if (!kt || kt[0] !== 2) { allFlat = false; break }
+          }
+        }
+        if (allFlat) {
+          const out = {}
+          for (let vi = 0; vi < _vlen; vi++) {
+            out[obj.keys[vi + 1]] = getVal(vi, obj).__val__
+          }
+          return out
+        }
       }
     }
 
