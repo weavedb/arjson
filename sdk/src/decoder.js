@@ -58,16 +58,13 @@ class Decoder {
   }
 
   // Shared scratch buffer for charcodes during string decode.
-  // Grows on demand; each get* call calls _scratch(len) to ensure
-  // capacity. Avoids per-string-decode Uint16Array allocation.
+  // Plain JS array (length-truncatable) lets us pass it directly to
+  // String.fromCharCode.apply without a Uint16Array.subarray allocation
+  // per string (was 2-4% as CreateTypedArray + TypedArrayPrototypeSubArray).
   _scratch(len) {
-    if (!this._scratchBuf || this._scratchBuf.length < len) {
-      // Round up to nearest power of 2 to limit re-grow churn.
-      let cap = 16
-      while (cap < len) cap <<= 1
-      this._scratchBuf = new Uint16Array(cap)
-    }
-    return this._scratchBuf
+    if (!this._scratchArr) this._scratchArr = []
+    this._scratchArr.length = len
+    return this._scratchArr
   }
 
   decode(v, count = null, strmap, strdiffs = []) {
@@ -287,11 +284,11 @@ class Decoder {
           // under the engine's apply() arg limit.
           let val
           if (len <= 16384) {
-            val = String.fromCharCode.apply(null, codes.subarray(0, len))
+            val = String.fromCharCode.apply(null, codes)
           } else {
             val = ""
             for (let off = 0; off < len; off += 16384) {
-              val += String.fromCharCode.apply(null, codes.subarray(off, Math.min(off + 16384, len)))
+              val += String.fromCharCode.apply(null, codes.slice(off, Math.min(off + 16384, len)))
             }
           }
           this.strs.push(val)
@@ -329,11 +326,11 @@ class Decoder {
         const codes = this._scratch(len)
         for (let i = 0; i < len; i++) codes[i] = base64_rev_byte[this.n(6)]
         if (len <= 16384) {
-          this.json = String.fromCharCode.apply(null, codes.subarray(0, len))
+          this.json = String.fromCharCode.apply(null, codes)
         } else {
           let s = ""
           for (let off = 0; off < len; off += 16384) {
-            s += String.fromCharCode.apply(null, codes.subarray(off, Math.min(off + 16384, len)))
+            s += String.fromCharCode.apply(null, codes.slice(off, Math.min(off + 16384, len)))
           }
           this.json = s
         }
@@ -342,11 +339,11 @@ class Decoder {
         const codes = this._scratch(len)
         for (let i = 0; i < len; i++) codes[i] = Number(this.leb128())
         if (len <= 16384) {
-          this.json = String.fromCharCode.apply(null, codes.subarray(0, len))
+          this.json = String.fromCharCode.apply(null, codes)
         } else {
           let s = ""
           for (let off = 0; off < len; off += 16384) {
-            s += String.fromCharCode.apply(null, codes.subarray(off, Math.min(off + 16384, len)))
+            s += String.fromCharCode.apply(null, codes.slice(off, Math.min(off + 16384, len)))
           }
           this.json = s
         }
@@ -681,7 +678,7 @@ class Decoder {
             if (c > o.length * 8 + 64) {
               throw new Error("ARJSON decoder: read past end of buffer")
             }
-            this.keys.push(String.fromCharCode.apply(null, codes.subarray(0, klen)))
+            this.keys.push(String.fromCharCode.apply(null, codes))
           }
         } else {
           if (len === 2) this.keys.push("")
@@ -692,7 +689,7 @@ class Decoder {
             const klen = len - 1
             const codes = this._scratch(klen)
             for (let i2 = 0; i2 < klen; i2++) codes[i2] = Number(this.leb128())
-            this.keys.push(String.fromCharCode.apply(null, codes.subarray(0, klen)))
+            this.keys.push(String.fromCharCode.apply(null, codes))
           }
         }
       }
