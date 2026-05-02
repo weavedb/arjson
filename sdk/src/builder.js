@@ -29,20 +29,51 @@ const buildEx = (k, init0, init1) =>
     ? k[0] === 0 ? init0.has(k[1]) : init1.has(k[1])
     : false
 
-// Action codes returned by inner-loop dispatch helpers. The outer
-// loop interprets these to decide whether to break out of the inner
-// for, continue to the next iteration, or fall through to the
-// terminal-key dispatch.
+// extractPrimitive: read a single primitive value out of the columns
+// at the given vtype, advancing the per-build cursors. Returns the
+// extracted JS value. Shared across the three fast paths
+// (flat-array, flat-object, array-of-flat-objects) which all need to
+// pull primitives in vtype-order from the same column buffers.
+//
+// `cursors` is a 3-element array [nc, bc, sc] mutated in place so the
+// caller can read back the advanced positions when finished. Using a
+// 3-element array rather than 3 separate let bindings lets the
+// caller pass the same array for the whole loop without per-call
+// destructuring.
+const extractPrimitive = (vt, obj, cursors) => {
+  if (vt === 4 || vt === 5 || vt === 6) return obj.nums[cursors[0]++]
+  if (vt === 7) {
+    let str = obj.strs[cursors[2]++]
+    if (Array.isArray(str)) {
+      if (str[0] === -1) str = obj.strdiffs[str[1]]
+      else str = obj.strmap[str[0]]
+    }
+    return str
+  }
+  if (vt === 3) return obj.bools[cursors[1]++]
+  // vt === 1 (null) — no column read.
+  return null
+}
+
+// Action codes returned by inner-loop dispatch helpers. CONTINUE means
+// "advance to next key in the chain"; BREAK means "this vref is fully
+// processed, exit the inner loop." There used to be a FALLTHROUGH
+// action for one corner case in handleJsonNullInit; that case is now
+// handled directly by calling handleTerminalKey from inside the init
+// helper, so the action enum is binary.
 const ACT_CONTINUE = 0
 const ACT_BREAK = 1
-const ACT_FALLTHROUGH = 2
 
-// handleJsonNullInit: when json is null and we're about to descend the
-// first key in the chain, initialize _json and json based on the key's
-// container type. Returns { _json, json, action } so the outer loop can
-// commit the new accumulator + cursor and then continue / break / fall
-// through to terminal-key dispatch.
-const handleJsonNullInit = (k, k2, k2t, val, obj, atTerminal1, isLastKey, type, set) => {
+// handleJsonNullInit: first descent of the first vref of the build —
+// json is null and we need to initialize _json before descending.
+// Returns { _json, json, action }. The previous version of this
+// function returned a FALLTHROUGH action when its case demanded that
+// the caller drop into terminal-key dispatch; that special case is
+// now resolved here directly via handleTerminalKey, eliminating the
+// 3-state action enum.
+const handleJsonNullInit = (
+  k, k2, k2t, val, obj, atTerminal1, isLastKey, type, set, ex,
+) => {
   const t = type(k)
   set(k)
   if (t === 0) {
@@ -60,8 +91,10 @@ const handleJsonNullInit = (k, k2, k2t, val, obj, atTerminal1, isLastKey, type, 
         arr_push(json, val, obj)
         return { _json, json, action: ACT_BREAK }
       }
-      // i2 === keys.length - 2 with t2 !== 0 falls through to terminal-key dispatch
-      return { _json, json, action: ACT_FALLTHROUGH }
+      // Same path the old FALLTHROUGH used to take in the outer loop —
+      // dispatch directly to terminal-key handler.
+      json = handleTerminalKey(json, k, k2, val, obj, type, set, ex)
+      return { _json, json, action: ACT_BREAK }
     }
     // Not terminal, not terminal-1 — descend into next container.
     if (k2t === 0) {
@@ -76,7 +109,7 @@ const handleJsonNullInit = (k, k2, k2t, val, obj, atTerminal1, isLastKey, type, 
     return { _json, json, action: ACT_CONTINUE }
   }
   // t !== 0 → object-rooted
-  let _json = {}
+  const _json = {}
   let json = _json
   if (atTerminal1) {
     obj_merge(json, k2[0], val, obj)
@@ -429,33 +462,14 @@ class Builder {
           }
         }
         if (allFlat) {
-          // Inline the value extraction (was getVal+wrapper-object alloc).
           const out = new Array(_vlen)
-          const _bools = obj.bools
-          const _nums = obj.nums
-          const _strs = obj.strs
-          const _strmap = obj.strmap
-          const _strdiffs = obj.strdiffs
-          let nc = obj.nc, bc = obj.bc, sc = obj.sc
+          const cursors = [obj.nc, obj.bc, obj.sc]
           for (let vi = 0; vi < _vlen; vi++) {
-            const vt = _vtypes[vi]
-            // nums column has already-negated value for vt=5 (decoder
-            // pushes -num for type 5). vt=4/5/6 all read identically.
-            if (vt === 4 || vt === 5 || vt === 6) out[vi] = _nums[nc++]
-            else if (vt === 7) {
-              let str = _strs[sc++]
-              if (Array.isArray(str)) {
-                if (str[0] === -1) str = _strdiffs[str[1]]
-                else str = _strmap[str[0]]
-              }
-              out[vi] = str
-            }
-            else if (vt === 3) out[vi] = _bools[bc++]
-            else /* vt === 1 */ out[vi] = null
+            out[vi] = extractPrimitive(_vtypes[vi], obj, cursors)
           }
-          obj.nc = nc
-          obj.bc = bc
-          obj.sc = sc
+          obj.nc = cursors[0]
+          obj.bc = cursors[1]
+          obj.sc = cursors[2]
           return out
         }
       }
@@ -492,18 +506,13 @@ class Builder {
           }
         }
         if (isAoO) {
-          const _bools = obj.bools
-          const _nums = obj.nums
-          const _strs = obj.strs
           const _strmap = obj.strmap
-          const _strdiffs = obj.strdiffs
-          let nc = obj.nc, bc = obj.bc, sc = obj.sc
-          // Map obj kref → object index in result (allocated in encounter order).
+          const cursors = [obj.nc, obj.bc, obj.sc]
+          // Map obj kref → object index in result (allocated in encounter
+          // order). Structural check doesn't enforce array-order
+          // discovery, so use a map.
           const objIndex = {}
           let nextIdx = 0
-          // Pre-pass: assign indices in vref-order. Inner objects are
-          // typically encountered in array order, but the structural check
-          // doesn't enforce that — discover via the index map.
           const out = []
           for (let vi = 0; vi < _vlen; vi++) {
             const keyKr = _vrefs[vi]
@@ -517,24 +526,11 @@ class Builder {
             // Resolve key: keys[keyKr - 1] is string OR [strmap_idx].
             const k = _keys[keyKr - 1]
             const kStr = typeof k === "string" ? k : _strmap[k[0]]
-            const vt = _vtypes[vi]
-            let val
-            if (vt === 4 || vt === 5 || vt === 6) val = _nums[nc++]
-            else if (vt === 7) {
-              let str = _strs[sc++]
-              if (Array.isArray(str)) {
-                if (str[0] === -1) str = _strdiffs[str[1]]
-                else str = _strmap[str[0]]
-              }
-              val = str
-            }
-            else if (vt === 3) val = _bools[bc++]
-            else val = null
-            out[oi][kStr] = val
+            out[oi][kStr] = extractPrimitive(_vtypes[vi], obj, cursors)
           }
-          obj.nc = nc
-          obj.bc = bc
-          obj.sc = sc
+          obj.nc = cursors[0]
+          obj.bc = cursors[1]
+          obj.sc = cursors[2]
           return out
         }
       }
@@ -565,31 +561,14 @@ class Builder {
         }
         if (allFlat) {
           const out = {}
-          const _bools = obj.bools
-          const _nums = obj.nums
-          const _strs = obj.strs
-          const _strmap = obj.strmap
-          const _strdiffs = obj.strdiffs
           const _keys = obj.keys
-          let nc = obj.nc, bc = obj.bc, sc = obj.sc
+          const cursors = [obj.nc, obj.bc, obj.sc]
           for (let vi = 0; vi < _vlen; vi++) {
-            const vt = _vtypes[vi]
-            const k = _keys[vi + 1]
-            if (vt === 4 || vt === 5 || vt === 6) out[k] = _nums[nc++]
-            else if (vt === 7) {
-              let str = _strs[sc++]
-              if (Array.isArray(str)) {
-                if (str[0] === -1) str = _strdiffs[str[1]]
-                else str = _strmap[str[0]]
-              }
-              out[k] = str
-            }
-            else if (vt === 3) out[k] = _bools[bc++]
-            else /* vt === 1 */ out[k] = null
+            out[_keys[vi + 1]] = extractPrimitive(_vtypes[vi], obj, cursors)
           }
-          obj.nc = nc
-          obj.bc = bc
-          obj.sc = sc
+          obj.nc = cursors[0]
+          obj.bc = cursors[1]
+          obj.sc = cursors[2]
           return out
         }
       }
@@ -635,13 +614,12 @@ class Builder {
             k, k2, k2t, val, obj,
             i2 === klen - 2,
             i2 === klen - 1,
-            type, set,
+            type, set, ex,
           )
           _json = r._json
           json = r.json
           if (r.action === ACT_BREAK) break
-          if (r.action === ACT_CONTINUE) continue
-          // ACT_FALLTHROUGH → drop into terminal-key dispatch below
+          continue
         } else if (i2 === 0) {
           const k2 = keys[i2 + 1]
           const r = handleFirstKey(json, k, k2, val, obj, klen, type, set, ex)
