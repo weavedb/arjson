@@ -439,9 +439,9 @@ class Builder {
           const ntype = type(k2)
 
           if (jtype === 1 && ctype === 1) {
-            // FIXED: Skip object index keys in the middle - we're already at the right level
-            // The object index key just indicates we're within an object structure
-            // The actual navigation happens when we encounter string keys (type 2)
+            // Skip object-index keys in the middle of the chain — we're
+            // already at the right object level. Actual navigation
+            // happens when we encounter string keys (type 2).
             continue
           }
 
@@ -643,12 +643,9 @@ const get = (obj, type) => {
   return val
 }
 const getVal = (i, obj) => {
-  let type = obj.vtypes[i]
-  let val = null
-  let replace = null
-  let push = null
+  const type = obj.vtypes[i]
   if (Array.isArray(type)) {
-    val = { __update__: true }
+    const val = { __update__: true }
     if (type[0] === 2) {
       val.__index__ = type[1]
       val.__remove__ = type[2]
@@ -658,15 +655,23 @@ const getVal = (i, obj) => {
       val.__remove__ = type[2]
       val.__del__ = true
     } else if (type[0] === 0) {
-      if (type[1] === 0) {
-        val.__del__ = true
-      } else if (type[1] === 1) {
-        val.__merge__ = true
-      }
-    } else console.log("xxxxxxxxxxxxxxxxxxxxxxxxxxx")
-  } else if (type === 0) val = { __del__: true }
-  else val = { __val__: get(obj, type) }
-  return val
+      if (type[1] === 0) val.__del__ = true
+      else if (type[1] === 1) val.__merge__ = true
+      // type[1] outside {0, 1} is unreachable from any valid encode and
+      // would mean a corrupt delta payload. The decoder's size-sanity
+      // guards reject such input before this point; if we somehow get
+      // here, leave val.__update__ true and let the build pass interpret
+      // it as "no-op update" rather than throwing — matches prior
+      // forgiving behavior and keeps decode robust.
+    } else {
+      throw new Error(
+        `ARJSON builder: unhandled vtype shape [${type[0]}, ...]`,
+      )
+    }
+    return val
+  }
+  if (type === 0) return { __del__: true }
+  return { __val__: get(obj, type) }
 }
 
 const obj_merge = (json, k, val, obj) => {
