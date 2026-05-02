@@ -248,24 +248,31 @@ concatenation loses.
 
 Crossing the property axes against the formats:
 
-| Format       | Schemaless | Bit-pack | Inline dict | Columnar | Delta | Deterministic |
-| ------------ | :--------: | :------: | :---------: | :------: | :---: | :-----------: |
-| JSON         |     ✓      |          |             |          |       |               |
-| MessagePack  |     ✓      |          |             |          |       |       ✓       |
-| CBOR         |     ✓      |          |             |          |       |       ✓ CDE   |
-| BSON         |     ✓      |          |             |          |       |       ✓       |
-| Smile        |     ✓      |          |     ✓       | partial  |       |       ✓       |
-| Ion          |     ✓      |          |     ✓       | partial  |       |       ✓       |
-| Protobuf     |            |          |    n/a      |          |       |       ✓       |
-| Cap'n Proto  |            |          |    n/a      |          |       |       ✓       |
-| Avro         |            |          |    n/a      |          |       |     varies    |
-| Parquet      |            |    ✓     |     ✓       |    ✓     |       |       ✓       |
-| Yjs          |     ✓      |          |             |          |   ✓   |     partial   |
-| Automerge    |     ✓      |          |             |          |   ✓   |     partial   |
-| **ARJSON**   |   **✓**    |   **✓**  |   **✓**     |   **✓**  | **✓** |     **✓**     |
+| Format       | Schemaless | Bit-pack | Inline dict | Columnar | Delta | Deterministic | Extensible |
+| ------------ | :--------: | :------: | :---------: | :------: | :---: | :-----------: | :--------: |
+| JSON         |     ✓      |          |             |          |       |               |     n/a    |
+| MessagePack  |     ✓      |          |             |          |       |       ✓       |     ext    |
+| CBOR         |     ✓      |          |             |          |       |       ✓ CDE   |    tags    |
+| BSON         |     ✓      |          |             |          |       |       ✓       |    types   |
+| Smile        |     ✓      |          |     ✓       | partial  |       |       ✓       |            |
+| Ion          |     ✓      |          |     ✓       | partial  |       |       ✓       |  symbols   |
+| Protobuf     |            |          |    n/a      |          |       |       ✓       |  schema    |
+| Cap'n Proto  |            |          |    n/a      |          |       |       ✓       |  schema    |
+| Avro         |            |          |    n/a      |          |       |     varies    |  schema    |
+| Parquet      |            |    ✓     |     ✓       |    ✓     |       |       ✓       |  schema    |
+| Yjs          |     ✓      |          |             |          |   ✓   |     partial   |            |
+| Automerge    |     ✓      |          |             |          |   ✓   |     partial   |            |
+| **ARJSON**   |   **✓**    |   **✓**  |   **✓**     |   **✓**  | **✓** |     **✓**     | **gate**   |
 
-ARJSON is the only row with all six checkmarks. That intersection is
-empty in the prior art.
+ARJSON is the only row with all seven properties present. The "gate"
+column refers to the structurally-unreachable `00000` bit prefix
+(documented in [format.md](./format.md)) that reserves a forward-
+compatible extension point in the wire format. v2 decoders can detect
+extension payloads on the first byte; v1 decoders treat them as invalid.
+The reservation exists because of a logical contradiction in the
+existing dispatch ("non-empty structured value with zero values"),
+costs zero bits in normal encodings, and was intentionally left open
+in the v1 spec for this purpose.
 
 ## Where ARJSON is a recombination, not a discovery
 

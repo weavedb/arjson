@@ -47,6 +47,15 @@ Three properties together are not present in any existing format:
    delta is content-addressable and the full state at any point in history
    is reconstructible by replaying the chain.
 
+A fourth, narrower, but architecturally important property:
+
+4. **Forward-compatible extension gate.** The byte-stream prefix `00000`
+   is structurally unreachable from any valid input under the v1 encoder
+   (it would require encoding a non-empty structure with zero values, a
+   contradiction). The reservation costs zero bits in normal encodings
+   and gives v2 decoders an unambiguous first-byte signal for extension
+   payloads. See [format.md](./format.md) for details.
+
 The combination targets workloads where per-mutation byte cost dominates
 total storage, encoding determinism matters for hashing/consensus, and the
 storage system requires history reconstruction. Decentralized databases,

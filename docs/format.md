@@ -183,6 +183,45 @@ A complete chain is then:
 
 with length-prefixed framing between deltas (LEB128 length, then bytes).
 
+## Reserved extension space
+
+The format reserves a structurally unreachable bit prefix for future
+extensions. Specifically, the byte-stream prefix `00000` (five leading
+zero bits) is never produced by any valid input under the current
+encoder.
+
+The reasoning is a logical impossibility in the dispatch:
+
+```
+bit 0 = 0   → structured mode (non-empty object or array)
+bits 1–2    → "short" encoding selector for the value count (00 = 2-bit)
+bits 3–4    → 2-bit value count
+```
+
+A structured-mode encoding with a value count of zero would mean "a
+non-empty object containing zero values," which is contradictory: empty
+`{}` and `[]` always take the single-mode path (codes `0000101` and
+`0000100` respectively), and any non-empty object or array has at least
+one value to encode.
+
+The encoder never emits a stream beginning with `00000`. A v2 decoder,
+on encountering this prefix, knows immediately that the payload is in an
+extension format. A v1 decoder must reject such streams as invalid.
+
+This gate enables forward-compatible evolution without invalidating any
+existing v1 payloads:
+
+- Sub-version dispatch can be encoded in the bits following the gate
+  (e.g., `00000 000` for v2.0, `00000 001` for v2.1).
+- New value types, longer header forms, embedded content hashes, or
+  alternative encoding families can all be signaled here.
+- A v2 decoder that doesn't see the gate falls through to the v1 parser,
+  preserving full backward compatibility.
+
+The cost in the wire format is zero: the reservation exists because of a
+logical contradiction in the existing dispatch, not because of an
+arbitrary held-back code.
+
 ## Determinism guarantees
 
 The encoder's behavior is deterministic in three respects:
@@ -206,12 +245,6 @@ required for content-addressing and hash-based consensus.
 - **Formal grammar**. The implementation describes the format imperatively;
   a context-free grammar or pseudocode specification would help port the
   format to other languages.
-
-- **Versioning / extensibility**. The format does not currently reserve
-  bits for version or extension flags. Adding a new value type or a new
-  delta operation breaks wire compatibility with existing payloads. For a
-  format intended for permanent storage, this is the largest specification
-  gap.
 
 - **Error semantics**. The implementation defines "what valid input looks
   like" but does not define how a decoder should handle malformed input
