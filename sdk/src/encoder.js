@@ -296,7 +296,15 @@ class Encoder {
     } else isDiff = diff < 4
     const v2 = isDiff ? diff : v
     this.prev_klink = v
-    this.push_kflag(isDiff ? 1 : 0)
+    // Inline single-bit kflag write — same pattern as push_vlink.
+    const flag = isDiff ? 1 : 0
+    const kflen = this.kflags_len
+    const kfidx = kflen >>> 5
+    if (kfidx + 1 >= this.kflags.length) this._grow()
+    const kfused = kflen & 31
+    if (kfused === 0) this.kflags[kfidx] = flag
+    else this.kflags[kfidx] = (this.kflags[kfidx] << 1) | flag
+    this.kflags_len = kflen + 1
     this._push_klink(v2, isDiff, this.dcount)
   }
 
