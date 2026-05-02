@@ -1176,11 +1176,12 @@ function _encode(
   prev_type = null,
   index = null,
   push = null,
-  update = false,
-  op,
-  strmap,
   diff,
 ) {
+  // Note: previously took (v, u, prev, prev_type, index, push, update, op,
+  // strmap, diff). The middle three (`update`, `op`, `strmap`) were
+  // declared but never read inside the function body. Removed from the
+  // signature; only the call site in artable.delta needed updating.
   if (typeof v === "number" && v - v !== 0) v = null
   // Reusable [type, index, push] tuple. Mutating the shared scratch
   // saves a 3-element array allocation per recursive call.

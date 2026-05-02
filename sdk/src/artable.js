@@ -360,42 +360,35 @@ class ARTable {
       }
     }
     const push = includes(op, ["delete", "diff", "replace"]) ? 1 : 0
-    u.push_type(_encode(v, u, prev, null, index, push, true, op, null, diff))
+    u.push_type(_encode(v, u, prev, null, index, push, diff))
     return { delta: u.dump(), strmap: u.strMap }
   }
   compactStrMap() {
     let strs = {}
+    // strs entries shaped [-1, k] are string-diff references, not strmap
+    // refs — exclude them when computing reachable strmap entries below.
     for (let v of this.keys) if (Array.isArray(v)) strs[v[0]] = true
     for (let v of this.strs) {
-      if (Array.isArray(v) && v[0] !== -1) {
-        // <-- Add check: ignore diff entries
-        strs[v[0]] = true
-      }
+      if (Array.isArray(v) && v[0] !== -1) strs[v[0]] = true
     }
     let strs_arr = []
     for (let k in this.strmap) {
-      if (strs[k] !== true) {
-        delete this.strmap[k]
-      } else {
-        strs_arr.push({ from: +k, v: this.strmap[k] })
-      }
+      if (strs[k] !== true) delete this.strmap[k]
+      else strs_arr.push({ from: +k, v: this.strmap[k] })
     }
     strs_arr = sortBy(v => v.from, strs_arr)
+    const smap = {}
+    const imap = {}
     let i = 0
-    let smap = {}
-    let imap = {}
-    for (let v of strs_arr) {
+    for (const v of strs_arr) {
       v.to = i++
       smap[v.to] = v.v
       imap[v.from] = v.to
     }
     this.strmap = smap
-    for (let v of this.keys) if (Array.isArray(v)) v[0] = imap[v[0]]
-    for (let v of this.strs) {
-      if (Array.isArray(v) && v[0] !== -1) {
-        // <-- Add check: ignore diff entries
-        v[0] = imap[v[0]]
-      }
+    for (const v of this.keys) if (Array.isArray(v)) v[0] = imap[v[0]]
+    for (const v of this.strs) {
+      if (Array.isArray(v) && v[0] !== -1) v[0] = imap[v[0]]
     }
   }
 

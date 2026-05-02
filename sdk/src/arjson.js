@@ -315,7 +315,4 @@ export class ARJSON {
     }
     return this.cache
   }
-  table() {
-    return this.artable.table()
-  }
 }
