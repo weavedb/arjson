@@ -46,7 +46,7 @@ function diffArray(a, b, path = "") {
 
   if (b.length === 0 && a.length > 0) {
     for (let i = a.length - 1; i >= 0; i--) {
-      ops.push({ path: path + `[${i}]`, op: "delete", from: a[i] })
+      ops.push({ path: path + `[${i}]`, op: "remove", from: a[i] })
     }
     return ops
   }
@@ -80,7 +80,7 @@ function diffArray(a, b, path = "") {
 
   if (a.length > b.length) {
     for (let i = a.length - 1; i >= b.length; i--) {
-      ops.push({ path: path + `[${i}]`, op: "delete", from: a[i] })
+      ops.push({ path: path + `[${i}]`, op: "remove", from: a[i] })
     }
   }
 
@@ -106,7 +106,7 @@ function diffArray(a, b, path = "") {
         })
       }
     } else {
-      ops.push({ path: path + `[${idx}]`, op: "delete", from: a[idx] })
+      ops.push({ path: path + `[${idx}]`, op: "remove", from: a[idx] })
     }
   }
 
@@ -163,9 +163,9 @@ const diff = (a, b, path = "", depth = 0) => {
     if (_path !== "") _path += "."
     _path += escapeKey(v)
     if (typeof a[v] === "undefined") {
-      q.push({ path: _path, op: "new", to: b[v] })
+      q.push({ path: _path, op: "add", to: b[v] })
     } else if (typeof b[v] === "undefined") {
-      q.push({ path: _path, op: "delete", from: a[v] })
+      q.push({ path: _path, op: "remove", from: a[v] })
     } else if (!equals(a[v], b[v])) {
       q = q.concat(diff(a[v], b[v], _path, depth + 1))
     }
