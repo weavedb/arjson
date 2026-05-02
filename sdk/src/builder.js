@@ -41,12 +41,28 @@ class Builder {
   }
 
   build() {
-    let obj = structuredClone(this.table())
-    obj.arrs = {}
-    obj.objs = {}
-    obj.nc = 0
-    obj.bc = 0
-    obj.sc = 0
+    // The build pass only reads columns (vrefs, krefs, vtypes, keys, strs,
+    // strmap, strdiffs, etc.) — it mutates obj.arrs / obj.objs / counters.
+    // structuredClone was a deep copy of all columns, multi-MB on big
+    // inputs. Shallow object reference is correct and dramatically cheaper.
+    const t = this.table()
+    const obj = {
+      vrefs: t.vrefs,
+      krefs: t.krefs,
+      ktypes: t.ktypes,
+      keys: t.keys,
+      vtypes: t.vtypes,
+      bools: t.bools,
+      nums: t.nums,
+      strs: t.strs,
+      strmap: t.strmap,
+      strdiffs: t.strdiffs,
+      arrs: {},
+      objs: {},
+      nc: 0,
+      bc: 0,
+      sc: 0,
+    }
 
     let _json = null
     if (obj.vrefs.length === 0) {

@@ -78,17 +78,34 @@ class Decoder {
     }
     this.key_length = 0
     this.num_cache = null
-    this.vflags = []
-    this.kflags = []
-    this.bools = []
-    this.krefs = []
-    this.vrefs = []
-    this.ktypes = []
-    this.vtypes = []
-    this.nums = []
-    this.keys = []
-    this.strs = []
-    this.strdiffs = []
+    // Reuse arrays across calls when possible; truncating with length=0
+    // is dramatically cheaper than allocating fresh arrays + GC pressure
+    // (avoids GrowFastSmiOrObjectElements re-grows on the first pushes).
+    if (this.vflags === undefined) {
+      this.vflags = []
+      this.kflags = []
+      this.bools = []
+      this.krefs = []
+      this.vrefs = []
+      this.ktypes = []
+      this.vtypes = []
+      this.nums = []
+      this.keys = []
+      this.strs = []
+      this.strdiffs = []
+    } else {
+      this.vflags.length = 0
+      this.kflags.length = 0
+      this.bools.length = 0
+      this.krefs.length = 0
+      this.vrefs.length = 0
+      this.ktypes.length = 0
+      this.vtypes.length = 0
+      this.nums.length = 0
+      this.keys.length = 0
+      this.strs.length = 0
+      this.strdiffs.length = 0
+    }
     this.json = {}
     this.single = this.n(1) === 1
     if (this.single) this.getSingle()
