@@ -335,18 +335,21 @@ class Decoder {
   }
 
   getVflags() {
-    // Bound allocation: each flag is 1 bit, so this.len can't exceed remaining
-    // buffer bits. Throw on malformed input that claims a longer run.
     const maxBits = this.o.length * 8 - this.c
     if (this.len > maxBits) {
       throw new Error("ARJSON decoder: vflags length exceeds remaining buffer")
     }
-    let i = 0
-    while (i < this.len) {
-      const flag = this.n(1)
-      this.vflags.push(flag)
-      i++
+    // Inline n(1) for the hot bit-by-bit flag read. Avoids 1721 method
+    // calls + function-frame allocation for each 1-bit read.
+    const o = this.o
+    const len = this.len
+    const vflags = this.vflags
+    let c = this.c
+    for (let i = 0; i < len; i++) {
+      vflags.push((o[c >>> 3] >> (7 - (c & 7))) & 1)
+      c++
     }
+    this.c = c
   }
 
   getKflags() {
@@ -355,12 +358,14 @@ class Decoder {
     if (need > maxBits) {
       throw new Error("ARJSON decoder: kflags length exceeds remaining buffer")
     }
-    let i = 0
-    while (i < need) {
-      const flag = this.n(1)
-      this.kflags.push(flag)
-      i++
+    const o = this.o
+    const kflags = this.kflags
+    let c = this.c
+    for (let i = 0; i < need; i++) {
+      kflags.push((o[c >>> 3] >> (7 - (c & 7))) & 1)
+      c++
     }
+    this.c = c
   }
 
   getKrefs() {
